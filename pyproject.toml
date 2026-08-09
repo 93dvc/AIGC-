@@ -1,2 +1,15 @@
+[project]
+name = "aigc-mft-ad-platform"
+version = "1.0.0"
+description = "AIGC MFT 公益广告实验平台"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "openai",
+    "python-dotenv",
+    "pydantic"
+]
+
 [tool.vercel]
 entrypoint = "backend.main:app"
