@@ -2,11 +2,11 @@ from pathlib import Path
 import base64
 import json
 import os
-import time
 import uuid
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 from dotenv import load_dotenv
 
@@ -19,8 +19,6 @@ from pydantic import BaseModel, Field
 import psycopg
 from psycopg.rows import dict_row
 
-from vercel.blob import BlobClient
-
 
 # ============================================================
 # 基础配置
@@ -29,23 +27,11 @@ from vercel.blob import BlobClient
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # 本地开发时读取 .env
-# Vercel 部署时直接使用 Environment Variables
+# Vercel 上没有 .env 也不会报错
 load_dotenv(BASE_DIR / ".env")
 
 app = FastAPI(
-    title="AIGC MFT 公益广告实验平台",
-    version="2.0.0"
-)
-
-
-# ============================================================
-# Vercel Serverless 配置
-# ============================================================
-
-# 防止某些部署环境将当前工作目录设置得不确定
-os.environ.setdefault(
-    "PYTHONUNBUFFERED",
-    "1"
+    title="AIGC MFT 公益广告实验平台"
 )
 
 
@@ -58,13 +44,13 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 def db():
     """
-    创建 PostgreSQL 连接。
+    PostgreSQL 数据库连接。
 
     Vercel:
-        使用 DATABASE_URL。
+        使用 Vercel / Neon 的 DATABASE_URL。
 
     本地:
-        使用 .env 中的 DATABASE_URL。
+        可以在项目根目录 .env 中配置 DATABASE_URL。
     """
 
     database_url = os.getenv("DATABASE_URL")
@@ -72,8 +58,7 @@ def db():
     if not database_url:
         raise RuntimeError(
             "未配置 DATABASE_URL。"
-            "请在 Vercel Project Settings → Environment Variables "
-            "中配置 DATABASE_URL。"
+            "请在 Vercel Environment Variables 中配置。"
         )
 
     return psycopg.connect(
@@ -85,11 +70,11 @@ def db():
 
 def init_db():
     """
-    初始化 PostgreSQL 数据表。
+    初始化数据库表。
 
     注意：
-    Vercel Serverless 中不能依赖本地 SQLite。
-    所有持久化数据都放 PostgreSQL。
+    不在模块 import 阶段强制执行。
+    Vercel Serverless 环境中由请求触发初始化。
     """
 
     conn = db()
@@ -99,25 +84,15 @@ def init_db():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS experiments (
-
                 id TEXT PRIMARY KEY,
-
                 topic TEXT NOT NULL,
-
                 care DOUBLE PRECISION NOT NULL,
-
                 fairness DOUBLE PRECISION NOT NULL,
-
                 loyalty DOUBLE PRECISION NOT NULL,
-
                 authority DOUBLE PRECISION NOT NULL,
-
                 sanctity DOUBLE PRECISION NOT NULL,
-
                 matched_foundation TEXT NOT NULL,
-
                 unmatched_foundation TEXT NOT NULL,
-
                 created_at TIMESTAMPTZ NOT NULL
             )
             """
@@ -126,23 +101,14 @@ def init_db():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS ads (
-
                 id TEXT PRIMARY KEY,
-
                 experiment_id TEXT NOT NULL,
-
                 condition TEXT NOT NULL,
-
                 foundation TEXT NOT NULL,
-
                 strategy_json TEXT NOT NULL,
-
                 copy TEXT NOT NULL,
-
                 image_prompt TEXT NOT NULL,
-
                 image_url TEXT,
-
                 FOREIGN KEY(experiment_id)
                     REFERENCES experiments(id)
                     ON DELETE CASCADE
@@ -153,27 +119,17 @@ def init_db():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS evaluations (
-
                 id BIGSERIAL PRIMARY KEY,
-
                 experiment_id TEXT NOT NULL,
-
                 ad_id TEXT NOT NULL,
-
                 moral_resonance INTEGER NOT NULL,
-
                 emotional_response INTEGER NOT NULL,
-
                 persuasion INTEGER NOT NULL,
-
                 behavioral_intention INTEGER NOT NULL,
-
                 created_at TIMESTAMPTZ NOT NULL,
-
                 FOREIGN KEY(experiment_id)
                     REFERENCES experiments(id)
                     ON DELETE CASCADE,
-
                 FOREIGN KEY(ad_id)
                     REFERENCES ads(id)
                     ON DELETE CASCADE
@@ -184,35 +140,11 @@ def init_db():
         conn.commit()
 
     except Exception:
-
         conn.rollback()
-
         raise
 
     finally:
-
         conn.close()
-
-
-# ============================================================
-# 不在 import 阶段让整个 Serverless Function 崩溃
-# ============================================================
-
-try:
-
-    init_db()
-
-    print("✅ PostgreSQL 数据库初始化检查完成")
-
-except Exception as exc:
-
-    print(
-        f"⚠️ 数据库初始化检查失败：{exc}"
-    )
-
-    print(
-        "⚠️ 不阻止 FastAPI 启动，API 请求时会返回具体数据库错误。"
-    )
 
 
 # ============================================================
@@ -220,27 +152,22 @@ except Exception as exc:
 # ============================================================
 
 FOUNDATIONS = {
-
     "care": {
         "label": "Care / Harm",
         "cn": "关怀 / 伤害"
     },
-
     "fairness": {
         "label": "Fairness / Cheating",
         "cn": "公平 / 欺骗"
     },
-
     "loyalty": {
         "label": "Loyalty / Betrayal",
         "cn": "忠诚 / 背叛"
     },
-
     "authority": {
         "label": "Authority / Subversion",
         "cn": "权威 / 颠覆"
     },
-
     "sanctity": {
         "label": "Sanctity / Degradation",
         "cn": "神圣 / 堕落"
@@ -249,35 +176,16 @@ FOUNDATIONS = {
 
 
 # ============================================================
-# Pydantic 数据模型
+# Pydantic
 # ============================================================
 
 class MFTScores(BaseModel):
 
-    care: float = Field(
-        ge=0,
-        le=10
-    )
-
-    fairness: float = Field(
-        ge=0,
-        le=10
-    )
-
-    loyalty: float = Field(
-        ge=0,
-        le=10
-    )
-
-    authority: float = Field(
-        ge=0,
-        le=10
-    )
-
-    sanctity: float = Field(
-        ge=0,
-        le=10
-    )
+    care: float = Field(ge=0, le=10)
+    fairness: float = Field(ge=0, le=10)
+    loyalty: float = Field(ge=0, le=10)
+    authority: float = Field(ge=0, le=10)
+    sanctity: float = Field(ge=0, le=10)
 
 
 class GenerateRequest(BaseModel):
@@ -325,21 +233,11 @@ def get_client(
     api_key_name: str,
     base_url_name: str
 ):
-    """
-    创建 OpenAI-compatible Client。
-
-    适用于：
-    - 官方 OpenAI API
-    - 你的中转站
-    - 其他 OpenAI Compatible API
-    """
 
     key = os.getenv(api_key_name)
-
     base_url = os.getenv(base_url_name)
 
-    if not key or key.startswith("your_"):
-
+    if not key:
         raise HTTPException(
             status_code=500,
             detail=(
@@ -353,46 +251,27 @@ def get_client(
     }
 
     if base_url:
-
         kwargs["base_url"] = base_url
 
-    return OpenAI(
-        **kwargs,
-        timeout=180.0,
-        max_retries=2
-    )
+    return OpenAI(**kwargs)
 
 
 # ============================================================
 # MFT
 # ============================================================
 
-def scores_dict(
-    mft: MFTScores
-):
+def scores_dict(mft: MFTScores):
 
     return {
-
-        "care":
-            mft.care,
-
-        "fairness":
-            mft.fairness,
-
-        "loyalty":
-            mft.loyalty,
-
-        "authority":
-            mft.authority,
-
-        "sanctity":
-            mft.sanctity
+        "care": mft.care,
+        "fairness": mft.fairness,
+        "loyalty": mft.loyalty,
+        "authority": mft.authority,
+        "sanctity": mft.sanctity
     }
 
 
-def choose_conditions(
-    mft: MFTScores
-):
+def choose_conditions(mft: MFTScores):
 
     scores = scores_dict(mft)
 
@@ -422,13 +301,10 @@ def build_generation_prompt(
     scores = scores_dict(mft)
 
     foundation_desc = "\n".join(
-
         f"- {k}: "
         f"{FOUNDATIONS[k]['label']} / "
         f"{FOUNDATIONS[k]['cn']} = {v}"
-
         for k, v in scores.items()
-
     )
 
     return f"""
@@ -496,50 +372,6 @@ def build_generation_prompt(
 
 “这张公益广告正在呼吁我保护、维护或避免伤害我最重视的道德价值。”
 
-必须根据该MFT维度选择：
-
-- 核心视觉主体
-- 视觉隐喻
-- 场景
-- 色彩倾向
-- 情绪
-- 摄影方式
-- 构图
-- 字体风格
-- 标语排版方式
-
-MFT参考：
-
-Care / Harm：
-
-强调生命、保护、伤害、脆弱、陪伴、救助。
-
-可以使用动物、儿童、自然生命、受伤的生命等。
-
-Fairness / Cheating：
-
-强调公平、不公平、交换、失衡、规则、机会差距。
-
-可以使用天平、两种待遇、资源分配、对比场景等。
-
-Loyalty / Betrayal：
-
-强调共同体、承诺、责任、背叛、关系。
-
-可以使用人与人、群体、家庭、伙伴、共同守护等。
-
-Authority / Subversion：
-
-强调规则、秩序、责任、公共规范、社会制度。
-
-可以使用城市、道路、公共设施、规则标识、秩序结构等。
-
-Sanctity / Degradation：
-
-强调纯净、污染、神圣、洁净与肮脏之间的冲突。
-
-可以使用纯净自然、污染侵入、洁净空间被破坏等。
-
 不匹配版必须围绕：
 
 {FOUNDATIONS[unmatched]['cn']}
@@ -547,11 +379,6 @@ Sanctity / Degradation：
 展开。
 
 但是视觉概念必须与匹配版明显不同。
-
-禁止：
-
-“匹配版是一只鲸鱼，
-不匹配版还是一只鲸鱼，只是换成了规则概念。”
 
 必须尽可能改变：
 
@@ -566,19 +393,6 @@ Sanctity / Degradation：
 - 色彩关系
 - 文字排版风格
 
-例如：
-
-如果匹配版使用“动物受到伤害”，
-不匹配版可以使用“城市公共规则”。
-
-如果匹配版使用“家庭关系”，
-不匹配版可以使用“公共空间”。
-
-如果匹配版使用“自然生命”，
-不匹配版可以使用“人工设施”。
-
-这样才能形成明显的实验刺激差异。
-
 必须生成两句中文公益广告标语。
 
 两句标语：
@@ -592,19 +406,6 @@ Sanctity / Degradation：
 7. 两句必须体现不同MFT道德价值。
 8. 必须具有传播性和记忆点。
 
-例如：
-
-匹配版：
-
-“少一份伤害，多一条生命的路。”
-
-不匹配版：
-
-“守一份规则，多一片海洋的净土。”
-
-两个版本的句式具有对应关系，
-但道德诉求明显不同。
-
 这是一个海报生成任务。
 
 图片中必须直接出现对应的中文公益广告标语。
@@ -613,7 +414,7 @@ Sanctity / Degradation：
 
 image_prompt必须明确写出：
 
-EXACT SLOGAN TO RENDER:
+EXACT CHINESE SLOGAN TO RENDER:
 
 “这里放copy中的完整中文标语”
 
@@ -622,54 +423,12 @@ EXACT SLOGAN TO RENDER:
 逐字、完整、清晰地生成在海报中。
 
 不得修改文字。
-
 不得增加额外文字。
-
 不得删除文字。
-
 不得生成英文翻译。
-
 不得生成乱码。
-
-不得生成假文字。
-
 不得生成Logo。
-
 不得生成水印。
-
-标语不仅仅是普通文字。
-
-必须根据MFT道德基础设计文字美术效果。
-
-Care / Harm：
-
-可以使用柔和、温暖、具有保护感的字体。
-
-文字可以与光线、生命、手掌、自然元素融合。
-
-Fairness / Cheating：
-
-可以使用对称排版、平衡构图、类似天平的视觉结构。
-
-文字可以具有强烈的秩序感和几何感。
-
-Loyalty / Betrayal：
-
-可以使用具有连接感、手写感、纪念感或共同体感的字体。
-
-文字可以与人物关系或连接线形成视觉呼应。
-
-Authority / Subversion：
-
-可以使用强烈、规整、现代、公共标识风格的字体。
-
-文字可以采用类似公共警示牌、城市标识、规则系统的排版。
-
-Sanctity / Degradation：
-
-可以使用高对比、洁净、庄重的字体。
-
-文字可以与纯净空间、光束、污染边界形成视觉冲突。
 
 必须生成：
 
@@ -752,7 +511,7 @@ Sanctity / Degradation：
 
 只输出合法JSON。
 
-结构必须严格为：
+结构严格为：
 
 {{
 "matched": {{
@@ -786,7 +545,6 @@ Sanctity / Degradation：
 "copy": "...",
 "image_prompt": "..."
 }}
-
 }}
 
 每一个image_prompt必须是完整英文Prompt。
@@ -812,16 +570,12 @@ Sanctity / Degradation：
 
 image_prompt中必须明确写出完整中文标语。
 
-例如：
-
 Exact Chinese slogan to render:
-“少一份伤害，多一条生命的路。”
+“完整中文标语”
 
 Render this exact Chinese sentence clearly and legibly.
 
 Do not alter, translate, abbreviate, or add words.
-
-最后：
 
 No logo.
 No watermark.
@@ -831,12 +585,10 @@ No unrelated typography.
 
 
 # ============================================================
-# LLM 调用
+# LLM
 # ============================================================
 
-def call_llm(
-    prompt: str
-):
+def call_llm(prompt: str):
 
     client = get_client(
         "LLM_API_KEY",
@@ -855,10 +607,8 @@ def call_llm(
             model=model,
 
             messages=[
-
                 {
                     "role": "system",
-
                     "content": (
                         "你是严谨的公益广告实验创意策略AI。"
                         "必须严格遵守MFT实验控制变量。"
@@ -866,13 +616,10 @@ def call_llm(
                         "必须输出合法JSON。"
                     )
                 },
-
                 {
                     "role": "user",
-
                     "content": prompt
                 }
-
             ],
 
             response_format={
@@ -889,34 +636,17 @@ def call_llm(
             detail=f"LLM调用失败：{exc}"
         ) from exc
 
-    if not response.choices:
-
-        raise HTTPException(
-            status_code=502,
-            detail="LLM没有返回任何choices。"
-        )
-
     content = (
         response
         .choices[0]
         .message
         .content
+        .strip()
     )
-
-    if not content:
-
-        raise HTTPException(
-            status_code=502,
-            detail="LLM返回内容为空。"
-        )
-
-    content = content.strip()
 
     try:
 
-        return json.loads(
-            content
-        )
+        return json.loads(content)
 
     except json.JSONDecodeError as exc:
 
@@ -926,8 +656,8 @@ def call_llm(
 
             detail=(
                 "LLM返回内容不是有效JSON。"
-                f"实际返回长度：{len(content)} 字符。"
-                f"返回开头：{content[:500]}"
+                f"实际返回长度：{len(content)}。"
+                f"返回开头：{content[:300]}"
             )
 
         ) from exc
@@ -935,35 +665,10 @@ def call_llm(
 
 # ============================================================
 # Vercel Blob
+#
+# 不再使用 BlobClient()
+# 直接通过 Blob REST API 上传
 # ============================================================
-
-def get_blob_token():
-
-    """
-    获取 Vercel Blob Read/Write Token。
-
-    优先：
-        BLOB_READ_WRITE_TOKEN
-
-    兼容：
-        VERCEL_BLOB_READ_WRITE_TOKEN
-
-    注意：
-    BLOB_STORE_ID 不能替代 READ_WRITE_TOKEN。
-    """
-
-    token = os.getenv(
-        "BLOB_READ_WRITE_TOKEN"
-    )
-
-    if not token:
-
-        token = os.getenv(
-            "VERCEL_BLOB_READ_WRITE_TOKEN"
-        )
-
-    return token
-
 
 def upload_image_to_blob(
     image_bytes: bytes,
@@ -971,130 +676,160 @@ def upload_image_to_blob(
     condition: str
 ):
     """
-    上传图片到 Vercel Blob。
+    使用 Vercel Blob REST API 上传。
 
-    Vercel Serverless 中：
-    - 不保存到本地
-    - 不使用 /tmp 作为永久存储
-    - 直接将 bytes 上传到 Blob
+    这比 BlobClient 更适合当前 Vercel
+    Python Serverless 环境。
+
+    返回公开 Blob URL。
     """
 
     if not image_bytes:
 
         raise RuntimeError(
-            "图片数据为空，无法上传到 Vercel Blob。"
+            "图片数据为空，无法上传 Vercel Blob。"
         )
 
-    token = get_blob_token()
+    token = os.getenv(
+        "BLOB_READ_WRITE_TOKEN"
+    )
 
     if not token:
 
         raise RuntimeError(
-            "未找到 BLOB_READ_WRITE_TOKEN。"
-            "请在 Vercel Environment Variables 中配置。"
-        )
-
-    store_id = os.getenv(
-        "BLOB_STORE_ID"
-    )
-
-    if not store_id:
-
-        print(
-            "⚠️ 未检测到 BLOB_STORE_ID，"
-            "但继续尝试使用 BLOB_READ_WRITE_TOKEN 上传。"
+            "没有找到 BLOB_READ_WRITE_TOKEN。"
+            "请检查 Vercel Production Environment Variables。"
         )
 
     filename = (
         f"generated/{experiment_id}/{condition}.png"
     )
 
-    print(
-        f"☁️ 开始上传 Blob：{filename}"
+    # Vercel Blob multipart PUT API
+    upload_url = (
+        "https://blob.vercel-storage.com/"
+        + filename
     )
 
     print(
-        f"☁️ 图片大小：{len(image_bytes) / 1024 / 1024:.2f} MB"
+        f"☁️ 开始上传 Vercel Blob：{filename}"
     )
 
-    # ========================================================
-    # Vercel Blob Python SDK
-    # ========================================================
+    request = Request(
+        upload_url,
+        data=image_bytes,
+        method="PUT",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "image/png",
+            "x-api-version": "7"
+        }
+    )
 
-    last_error = None
+    try:
 
-    for attempt in range(1, 4):
+        with urlopen(
+            request,
+            timeout=60
+        ) as response:
+
+            status = response.status
+
+            response_body = response.read()
+
+        print(
+            f"☁️ Blob HTTP状态码：{status}"
+        )
+
+        if not response_body:
+
+            raise RuntimeError(
+                "Vercel Blob 返回空响应。"
+            )
 
         try:
 
-            client = BlobClient(
-                token=token
-            )
-
-            blob = client.put(
-
-                filename,
-
-                image_bytes,
-
-                access="public",
-
-                content_type="image/png",
-
-                add_random_suffix=False,
-
-                overwrite=True
-
-            )
-
-            blob_url = getattr(
-                blob,
-                "url",
-                None
-            )
-
-            if not blob_url:
-
-                raise RuntimeError(
-                    "Vercel Blob 上传成功但没有返回 URL。"
+            blob_data = json.loads(
+                response_body.decode(
+                    "utf-8"
                 )
-
-            print(
-                f"✅ Blob 上传成功：{blob_url}"
             )
 
-            return blob_url
+        except Exception:
 
-        except Exception as exc:
-
-            last_error = exc
-
-            print(
-                f"⚠️ Blob 上传第 {attempt}/3 次失败："
-                f"{type(exc).__name__}: {exc}"
-            )
-
-            if attempt < 3:
-
-                time.sleep(
-                    attempt * 2
+            raise RuntimeError(
+                "Vercel Blob 返回内容不是JSON："
+                + response_body[:500].decode(
+                    "utf-8",
+                    errors="replace"
                 )
+            )
 
-    raise RuntimeError(
-        "Vercel Blob 上传失败，"
-        f"已重试3次。"
-        f"最后错误："
-        f"{type(last_error).__name__}: {last_error}"
-    )
+        blob_url = (
+            blob_data.get("url")
+        )
+
+        if not blob_url:
+
+            raise RuntimeError(
+                "Vercel Blob 上传成功但没有返回 url。"
+                f"返回：{blob_data}"
+            )
+
+        print(
+            f"✅ Vercel Blob 上传成功：{blob_url}"
+        )
+
+        return blob_url
+
+    except HTTPError as exc:
+
+        error_body = ""
+
+        try:
+
+            error_body = exc.read().decode(
+                "utf-8",
+                errors="replace"
+            )
+
+        except Exception:
+            pass
+
+        print(
+            f"❌ Vercel Blob HTTP错误："
+            f"{exc.code} {exc.reason}"
+        )
+
+        print(
+            f"❌ Blob错误响应：{error_body[:1000]}"
+        )
+
+        raise RuntimeError(
+            "Vercel Blob HTTP上传失败："
+            f"HTTP {exc.code} {exc.reason}; "
+            f"response={error_body[:1000]}"
+        ) from exc
+
+    except URLError as exc:
+
+        raise RuntimeError(
+            f"Vercel Blob网络请求失败：{exc}"
+        ) from exc
+
+    except Exception as exc:
+
+        raise RuntimeError(
+            f"Vercel Blob上传异常："
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
 
 
 # ============================================================
-# URL图片下载
+# URL 图片下载
 # ============================================================
 
-def download_image_url(
-    url: str
-):
+def download_image_url(url: str):
 
     try:
 
@@ -1115,7 +850,7 @@ def download_image_url(
 
         with urlopen(
             request,
-            timeout=90
+            timeout=60
         ) as response:
 
             data = response.read()
@@ -1176,14 +911,14 @@ def generate_image(
 
         raise HTTPException(
             status_code=502,
-            detail=f"{condition} 图片API调用失败：{exc}"
+            detail=f"图片API调用失败：{exc}"
         ) from exc
 
     if not result.data:
 
         raise HTTPException(
             status_code=502,
-            detail=f"{condition} 图片API没有返回图片数据。"
+            detail="图片API没有返回图片数据。"
         )
 
     item = result.data[0]
@@ -1203,7 +938,7 @@ def generate_image(
     image_bytes = None
 
     # ========================================================
-    # 方案1：b64_json
+    # b64
     # ========================================================
 
     if b64:
@@ -1211,22 +946,26 @@ def generate_image(
         try:
 
             image_bytes = base64.b64decode(
-                b64,
-                validate=True
+                b64
             )
 
             print(
                 f"✅ {condition} 图片获得 b64_json"
             )
 
+            print(
+                f"📦 图片大小："
+                f"{len(image_bytes) / 1024 / 1024:.2f} MB"
+            )
+
         except Exception as exc:
 
             print(
-                f"⚠️ {condition} b64_json解析失败：{exc}"
+                f"⚠️ b64_json解析失败：{exc}"
             )
 
     # ========================================================
-    # 方案2：URL
+    # URL
     # ========================================================
 
     if image_bytes is None and url:
@@ -1260,13 +999,13 @@ def generate_image(
             status_code=502,
 
             detail=(
-                f"{condition} 图片API返回格式无法识别。"
+                "无法识别图片API返回格式。"
                 "既没有b64_json，也没有url。"
             )
         )
 
     # ========================================================
-    # 上传 Vercel Blob
+    # Blob
     # ========================================================
 
     try:
@@ -1281,6 +1020,11 @@ def generate_image(
         )
 
     except Exception as exc:
+
+        print(
+            f"❌ {condition} Blob上传失败："
+            f"{type(exc).__name__}: {exc}"
+        )
 
         raise HTTPException(
 
@@ -1298,12 +1042,8 @@ def generate_image(
     )
 
     return {
-
-        "url":
-            blob_url,
-
-        "source":
-            "vercel_blob"
+        "url": blob_url,
+        "source": "vercel_blob"
     }
 
 
@@ -1345,7 +1085,6 @@ def index():
 def health():
 
     database_ok = False
-
     database_error = None
 
     try:
@@ -1364,131 +1103,62 @@ def health():
 
         database_error = str(exc)
 
-    blob_token = get_blob_token()
+    blob_token = os.getenv(
+        "BLOB_READ_WRITE_TOKEN"
+    )
+
+    blob_store = os.getenv(
+        "BLOB_STORE_ID"
+    )
 
     return {
 
-        "status":
-            "ok",
+        "status": "ok",
 
-        "database":
-            database_ok,
+        "database": database_ok,
 
-        "database_error":
-            database_error,
+        "database_error": database_error,
 
-        "llm_configured":
-            bool(
-                os.getenv(
-                    "LLM_API_KEY"
-                )
-            ),
+        "llm_configured": bool(
+            os.getenv("LLM_API_KEY")
+        ),
 
-        "llm_base_url_configured":
-            bool(
-                os.getenv(
-                    "LLM_BASE_URL"
-                )
-            ),
+        "image_configured": bool(
+            os.getenv("IMAGE_API_KEY")
+        ),
 
-        "image_configured":
-            bool(
-                os.getenv(
-                    "IMAGE_API_KEY"
-                )
-            ),
+        "blob_configured": bool(
+            blob_token
+        ),
 
-        "image_base_url_configured":
-            bool(
-                os.getenv(
-                    "IMAGE_BASE_URL"
-                )
-            ),
-
-        "blob_configured":
-            bool(blob_token),
-
-        "blob_store_configured":
-            bool(
-                os.getenv(
-                    "BLOB_STORE_ID"
-                )
-            )
+        "blob_store_configured": bool(
+            blob_store
+        )
     }
 
 
 # ============================================================
-# Blob 专用诊断
+# 初始化数据库
 # ============================================================
 
-@app.get("/api/blob-health")
-def blob_health():
-
-    token = get_blob_token()
-
-    store_id = os.getenv(
-        "BLOB_STORE_ID"
-    )
-
-    if not token:
-
-        return {
-
-            "ok":
-                False,
-
-            "message":
-                "BLOB_READ_WRITE_TOKEN 未配置。",
-
-            "token_configured":
-                False,
-
-            "store_configured":
-                bool(store_id)
-        }
+@app.post("/api/init-db")
+def initialize_database():
 
     try:
 
-        client = BlobClient(
-            token=token
-        )
+        init_db()
 
-        # 不上传测试文件。
-        # 这里仅确认 SDK 可以创建客户端。
         return {
-
-            "ok":
-                True,
-
-            "message":
-                "Vercel Blob Client 创建成功。",
-
-            "token_configured":
-                True,
-
-            "store_configured":
-                bool(store_id),
-
-            "store_id":
-                store_id
+            "ok": True,
+            "message": "数据库初始化成功"
         }
 
     except Exception as exc:
 
-        return {
-
-            "ok":
-                False,
-
-            "message":
-                f"Vercel Blob Client 初始化失败：{exc}",
-
-            "token_configured":
-                True,
-
-            "store_configured":
-                bool(store_id)
-        }
+        raise HTTPException(
+            status_code=500,
+            detail=f"数据库初始化失败：{exc}"
+        ) from exc
 
 
 # ============================================================
@@ -1514,7 +1184,7 @@ def generate(
     )
 
     print(
-        f"📌 公益主题：{req.topic}"
+        f"📌 主题：{req.topic}"
     )
 
     matched, unmatched = choose_conditions(
@@ -1530,7 +1200,22 @@ def generate(
     )
 
     # ========================================================
-    # 第一步：LLM生成策略
+    # 初始化数据库
+    # ========================================================
+
+    try:
+
+        init_db()
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"数据库初始化失败：{exc}"
+        ) from exc
+
+    # ========================================================
+    # LLM
     # ========================================================
 
     ai = call_llm(
@@ -1556,59 +1241,55 @@ def generate(
         timezone.utc
     )
 
-    # ========================================================
-    # 检查LLM输出
-    # ========================================================
-
-    matched_item = ai.get(
-        "matched"
-    )
-
-    unmatched_item = ai.get(
-        "unmatched"
-    )
-
-    if not matched_item:
-
-        raise HTTPException(
-            status_code=500,
-            detail="LLM缺少 matched 输出。"
-        )
-
-    if not unmatched_item:
-
-        raise HTTPException(
-            status_code=500,
-            detail="LLM缺少 unmatched 输出。"
-        )
-
-    if not matched_item.get(
-        "image_prompt"
-    ):
-
-        raise HTTPException(
-            status_code=500,
-            detail="matched 缺少 image_prompt。"
-        )
-
-    if not unmatched_item.get(
-        "image_prompt"
-    ):
-
-        raise HTTPException(
-            status_code=500,
-            detail="unmatched 缺少 image_prompt。"
-        )
-
-    # ========================================================
-    # 第二步：数据库创建实验记录
-    # ========================================================
-
     conn = None
 
     try:
 
         conn = db()
+
+        matched_item = ai.get(
+            "matched"
+        )
+
+        unmatched_item = ai.get(
+            "unmatched"
+        )
+
+        if not matched_item:
+
+            raise HTTPException(
+                status_code=500,
+                detail="LLM缺少 matched 输出。"
+            )
+
+        if not unmatched_item:
+
+            raise HTTPException(
+                status_code=500,
+                detail="LLM缺少 unmatched 输出。"
+            )
+
+        if not matched_item.get(
+            "image_prompt"
+        ):
+
+            raise HTTPException(
+                status_code=500,
+                detail="matched 缺少 image_prompt。"
+            )
+
+        if not unmatched_item.get(
+            "image_prompt"
+        ):
+
+            raise HTTPException(
+                status_code=500,
+                detail="unmatched 缺少 image_prompt。"
+            )
+
+        # ====================================================
+        # 创建实验
+        # ====================================================
 
         conn.execute(
 
@@ -1643,73 +1324,32 @@ def generate(
 
             (
                 experiment_id,
-
                 req.topic,
-
                 req.mft.care,
-
                 req.mft.fairness,
-
                 req.mft.loyalty,
-
                 req.mft.authority,
-
                 req.mft.sanctity,
-
                 matched,
-
                 unmatched,
-
                 now
             )
         )
 
-        conn.commit()
+        # ====================================================
+        # 并行生图
+        # ====================================================
 
-    except Exception as exc:
+        image_tasks = {
+            "matched": matched_item,
+            "unmatched": unmatched_item
+        }
 
-        if conn:
+        image_results = {}
 
-            conn.rollback()
-
-            conn.close()
-
-        raise HTTPException(
-
-            status_code=500,
-
-            detail=(
-                f"实验数据库记录创建失败：{exc}"
-            )
-
-        ) from exc
-
-    finally:
-
-        if conn:
-
-            conn.close()
-
-    # ========================================================
-    # 第三步：并行生成两张图片
-    # ========================================================
-
-    image_tasks = {
-
-        "matched":
-            matched_item,
-
-        "unmatched":
-            unmatched_item
-    }
-
-    image_results = {}
-
-    print(
-        "\n🖼️ 开始并行生成两张图片..."
-    )
-
-    try:
+        print(
+            "\n🖼️ 开始并行生成两张图片..."
+        )
 
         with ThreadPoolExecutor(
             max_workers=2
@@ -1732,7 +1372,6 @@ def generate(
 
                 for condition, item
                 in image_tasks.items()
-
             }
 
             for future in as_completed(
@@ -1762,55 +1401,33 @@ def generate(
 
                     raise
 
-    except HTTPException:
+        # ====================================================
+        # 保存广告
+        # ====================================================
 
-        raise
+        result = {
 
-    except Exception as exc:
+            "experiment_id":
+                experiment_id,
 
-        raise HTTPException(
+            "topic":
+                req.topic,
 
-            status_code=502,
+            "mft":
+                scores_dict(req.mft),
 
-            detail=(
-                f"图片生成阶段失败：{exc}"
-            )
+            "matched_foundation":
+                matched,
 
-        ) from exc
+            "unmatched_foundation":
+                unmatched,
 
-    # ========================================================
-    # 第四步：写入广告数据
-    # ========================================================
+            "matched":
+                None,
 
-    result = {
-
-        "experiment_id":
-            experiment_id,
-
-        "topic":
-            req.topic,
-
-        "mft":
-            scores_dict(req.mft),
-
-        "matched_foundation":
-            matched,
-
-        "unmatched_foundation":
-            unmatched,
-
-        "matched":
-            None,
-
-        "unmatched":
-            None
-    }
-
-    conn = None
-
-    try:
-
-        conn = db()
+            "unmatched":
+                None
+        }
 
         for condition, foundation, key in [
 
@@ -1884,24 +1501,16 @@ def generate(
                 """,
 
                 (
-
                     ad_id,
-
                     experiment_id,
-
                     condition,
-
                     foundation,
-
                     json.dumps(
                         strategy,
                         ensure_ascii=False
                     ),
-
                     copy_text,
-
                     image_prompt,
-
                     image_url
                 )
             )
@@ -1929,18 +1538,41 @@ def generate(
 
         conn.commit()
 
+        print(
+            "\n" +
+            "=" * 60
+        )
+
+        print(
+            "🎉 整个实验生成完成"
+        )
+
+        print(
+            "=" * 60 +
+            "\n"
+        )
+
+        return result
+
+    except HTTPException:
+
+        if conn:
+            conn.rollback()
+
+        raise
+
     except Exception as exc:
 
         if conn:
-
             conn.rollback()
 
         raise HTTPException(
 
-            status_code=500,
+            status_code=502,
 
             detail=(
-                f"广告数据保存失败：{exc}"
+                f"实验生成失败："
+                f"{type(exc).__name__}: {exc}"
             )
 
         ) from exc
@@ -1948,24 +1580,7 @@ def generate(
     finally:
 
         if conn:
-
             conn.close()
-
-    print(
-        "\n" +
-        "=" * 60
-    )
-
-    print(
-        "🎉 整个实验生成完成"
-    )
-
-    print(
-        "=" * 60 +
-        "\n"
-    )
-
-    return result
 
 
 # ============================================================
@@ -2034,22 +1649,13 @@ def evaluate(
             """,
 
             (
-
                 req.experiment_id,
-
                 req.ad_id,
-
                 req.moral_resonance,
-
                 req.emotional_response,
-
                 req.persuasion,
-
                 req.behavioral_intention,
-
-                datetime.now(
-                    timezone.utc
-                )
+                datetime.now(timezone.utc)
             )
         )
 
@@ -2062,7 +1668,6 @@ def evaluate(
     except HTTPException:
 
         if conn:
-
             conn.rollback()
 
         raise
@@ -2070,7 +1675,6 @@ def evaluate(
     except Exception as exc:
 
         if conn:
-
             conn.rollback()
 
         raise HTTPException(
@@ -2086,12 +1690,11 @@ def evaluate(
     finally:
 
         if conn:
-
             conn.close()
 
 
 # ============================================================
-# 历史实验记录列表
+# 历史记录
 # ============================================================
 
 @app.get("/api/history")
@@ -2101,38 +1704,26 @@ def get_history():
 
     try:
 
+        init_db()
+
         conn = db()
 
         rows = conn.execute(
 
             """
             SELECT
-
                 e.id,
-
                 e.topic,
-
                 e.care,
-
                 e.fairness,
-
                 e.loyalty,
-
                 e.authority,
-
                 e.sanctity,
-
                 e.matched_foundation,
-
                 e.unmatched_foundation,
-
                 e.created_at,
-
-                COUNT(DISTINCT a.id)
-                    AS ad_count,
-
-                COUNT(DISTINCT ev.id)
-                    AS evaluation_count
+                COUNT(DISTINCT a.id) AS ad_count,
+                COUNT(DISTINCT ev.id) AS evaluation_count
 
             FROM experiments e
 
@@ -2143,29 +1734,18 @@ def get_history():
                 ON e.id = ev.experiment_id
 
             GROUP BY
-
                 e.id,
-
                 e.topic,
-
                 e.care,
-
                 e.fairness,
-
                 e.loyalty,
-
                 e.authority,
-
                 e.sanctity,
-
                 e.matched_foundation,
-
                 e.unmatched_foundation,
-
                 e.created_at
 
-            ORDER BY
-                e.created_at DESC
+            ORDER BY e.created_at DESC
             """
         ).fetchall()
 
@@ -2200,14 +1780,10 @@ def get_history():
                 },
 
                 "matched_foundation":
-                    row[
-                        "matched_foundation"
-                    ],
+                    row["matched_foundation"],
 
                 "unmatched_foundation":
-                    row[
-                        "unmatched_foundation"
-                    ],
+                    row["unmatched_foundation"],
 
                 "created_at":
                     row["created_at"].isoformat()
@@ -2245,12 +1821,11 @@ def get_history():
     finally:
 
         if conn:
-
             conn.close()
 
 
 # ============================================================
-# 获取单个历史实验详情
+# 历史实验详情
 # ============================================================
 
 @app.get(
@@ -2295,7 +1870,6 @@ def get_history_detail(
             SELECT *
             FROM ads
             WHERE experiment_id = %s
-
             ORDER BY
                 CASE
                     WHEN condition = 'matched'
@@ -2316,9 +1890,7 @@ def get_history_detail(
             SELECT *
             FROM evaluations
             WHERE experiment_id = %s
-
-            ORDER BY
-                created_at ASC
+            ORDER BY created_at ASC
             """,
 
             (
@@ -2413,21 +1985,15 @@ def get_history_detail(
 
             if ad["condition"] == "matched":
 
-                result[
-                    "matched"
-                ] = item
+                result["matched"] = item
 
             else:
 
-                result[
-                    "unmatched"
-                ] = item
+                result["unmatched"] = item
 
         for evaluation in evaluations:
 
-            result[
-                "evaluations"
-            ].append({
+            result["evaluations"].append({
 
                 "id":
                     evaluation["id"],
@@ -2436,29 +2002,19 @@ def get_history_detail(
                     evaluation["ad_id"],
 
                 "moral_resonance":
-                    evaluation[
-                        "moral_resonance"
-                    ],
+                    evaluation["moral_resonance"],
 
                 "emotional_response":
-                    evaluation[
-                        "emotional_response"
-                    ],
+                    evaluation["emotional_response"],
 
                 "persuasion":
-                    evaluation[
-                        "persuasion"
-                    ],
+                    evaluation["persuasion"],
 
                 "behavioral_intention":
-                    evaluation[
-                        "behavioral_intention"
-                    ],
+                    evaluation["behavioral_intention"],
 
                 "created_at":
-                    evaluation[
-                        "created_at"
-                    ].isoformat()
+                    evaluation["created_at"].isoformat()
                     if evaluation["created_at"]
                     else None
             })
@@ -2484,44 +2040,4 @@ def get_history_detail(
     finally:
 
         if conn:
-
             conn.close()
-
-
-# ============================================================
-# Vercel / ASGI
-# ============================================================
-
-# 不需要 uvicorn.run()
-#
-# Vercel 会自动发现：
-#
-#     app = FastAPI(...)
-#
-# 并通过 ASGI 运行。
-#
-# 本地运行时使用：
-#
-#     uvicorn backend.main:app --reload
-#
-# 或：
-#
-#     python -m uvicorn backend.main:app --reload
-#
-# ============================================================
-
-
-if __name__ == "__main__":
-
-    import uvicorn
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=int(
-            os.getenv(
-                "PORT",
-                "8000"
-            )
-        )
-    )
