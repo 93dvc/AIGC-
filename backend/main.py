@@ -2,6 +2,7 @@ from pathlib import Path
 import base64
 import json
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -27,15 +28,29 @@ from vercel.blob import BlobClient
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# 本地开发时读取 .env
+# Vercel 部署时直接使用 Environment Variables
 load_dotenv(BASE_DIR / ".env")
 
 app = FastAPI(
-    title="AIGC MFT 公益广告实验平台"
+    title="AIGC MFT 公益广告实验平台",
+    version="2.0.0"
 )
 
 
 # ============================================================
-# PostgreSQL 数据库
+# Vercel Serverless 配置
+# ============================================================
+
+# 防止某些部署环境将当前工作目录设置得不确定
+os.environ.setdefault(
+    "PYTHONUNBUFFERED",
+    "1"
+)
+
+
+# ============================================================
+# PostgreSQL
 # ============================================================
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -43,24 +58,28 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 def db():
     """
-    连接 PostgreSQL。
+    创建 PostgreSQL 连接。
 
     Vercel:
-        使用 Vercel/Neon 提供的 DATABASE_URL。
+        使用 DATABASE_URL。
 
     本地:
-        也可以在 .env 中配置 DATABASE_URL。
+        使用 .env 中的 DATABASE_URL。
     """
 
-    if not DATABASE_URL:
+    database_url = os.getenv("DATABASE_URL")
+
+    if not database_url:
         raise RuntimeError(
             "未配置 DATABASE_URL。"
-            "请在 Vercel Environment Variables 中配置 Neon PostgreSQL 的 DATABASE_URL。"
+            "请在 Vercel Project Settings → Environment Variables "
+            "中配置 DATABASE_URL。"
         )
 
     return psycopg.connect(
-        DATABASE_URL,
-        row_factory=dict_row
+        database_url,
+        row_factory=dict_row,
+        connect_timeout=10
     )
 
 
@@ -68,7 +87,9 @@ def init_db():
     """
     初始化 PostgreSQL 数据表。
 
-    使用 IF NOT EXISTS，因此可以安全重复执行。
+    注意：
+    Vercel Serverless 中不能依赖本地 SQLite。
+    所有持久化数据都放 PostgreSQL。
     """
 
     conn = db()
@@ -174,21 +195,24 @@ def init_db():
 
 
 # ============================================================
-# 应用启动时初始化数据库
+# 不在 import 阶段让整个 Serverless Function 崩溃
 # ============================================================
 
 try:
 
     init_db()
 
+    print("✅ PostgreSQL 数据库初始化检查完成")
+
 except Exception as exc:
 
     print(
-        f"⚠️ 数据库初始化失败：{exc}"
+        f"⚠️ 数据库初始化检查失败：{exc}"
     )
 
-    # 不在 import 阶段直接让整个 FastAPI 崩溃
-    # 后续 API 请求时会返回具体错误
+    print(
+        "⚠️ 不阻止 FastAPI 启动，API 请求时会返回具体数据库错误。"
+    )
 
 
 # ============================================================
@@ -221,7 +245,6 @@ FOUNDATIONS = {
         "label": "Sanctity / Degradation",
         "cn": "神圣 / 堕落"
     }
-
 }
 
 
@@ -302,14 +325,18 @@ def get_client(
     api_key_name: str,
     base_url_name: str
 ):
+    """
+    创建 OpenAI-compatible Client。
 
-    key = os.getenv(
-        api_key_name
-    )
+    适用于：
+    - 官方 OpenAI API
+    - 你的中转站
+    - 其他 OpenAI Compatible API
+    """
 
-    base_url = os.getenv(
-        base_url_name
-    )
+    key = os.getenv(api_key_name)
+
+    base_url = os.getenv(base_url_name)
 
     if not key or key.startswith("your_"):
 
@@ -329,7 +356,11 @@ def get_client(
 
         kwargs["base_url"] = base_url
 
-    return OpenAI(**kwargs)
+    return OpenAI(
+        **kwargs,
+        timeout=180.0,
+        max_retries=2
+    )
 
 
 # ============================================================
@@ -363,9 +394,7 @@ def choose_conditions(
     mft: MFTScores
 ):
 
-    scores = scores_dict(
-        mft
-    )
+    scores = scores_dict(mft)
 
     ordered = sorted(
         scores.items(),
@@ -390,9 +419,7 @@ def build_generation_prompt(
     unmatched: str
 ):
 
-    scores = scores_dict(
-        mft
-    )
+    scores = scores_dict(mft)
 
     foundation_desc = "\n".join(
 
@@ -842,6 +869,7 @@ def call_llm(
 
                 {
                     "role": "user",
+
                     "content": prompt
                 }
 
@@ -861,13 +889,28 @@ def call_llm(
             detail=f"LLM调用失败：{exc}"
         ) from exc
 
+    if not response.choices:
+
+        raise HTTPException(
+            status_code=502,
+            detail="LLM没有返回任何choices。"
+        )
+
     content = (
         response
         .choices[0]
         .message
         .content
-        .strip()
     )
+
+    if not content:
+
+        raise HTTPException(
+            status_code=502,
+            detail="LLM返回内容为空。"
+        )
+
+    content = content.strip()
 
     try:
 
@@ -884,7 +927,7 @@ def call_llm(
             detail=(
                 "LLM返回内容不是有效JSON。"
                 f"实际返回长度：{len(content)} 字符。"
-                f"返回开头：{content[:300]}"
+                f"返回开头：{content[:500]}"
             )
 
         ) from exc
@@ -894,16 +937,46 @@ def call_llm(
 # Vercel Blob
 # ============================================================
 
+def get_blob_token():
+
+    """
+    获取 Vercel Blob Read/Write Token。
+
+    优先：
+        BLOB_READ_WRITE_TOKEN
+
+    兼容：
+        VERCEL_BLOB_READ_WRITE_TOKEN
+
+    注意：
+    BLOB_STORE_ID 不能替代 READ_WRITE_TOKEN。
+    """
+
+    token = os.getenv(
+        "BLOB_READ_WRITE_TOKEN"
+    )
+
+    if not token:
+
+        token = os.getenv(
+            "VERCEL_BLOB_READ_WRITE_TOKEN"
+        )
+
+    return token
+
+
 def upload_image_to_blob(
     image_bytes: bytes,
     experiment_id: str,
     condition: str
 ):
-
     """
-    将图片上传到 Vercel Blob。
+    上传图片到 Vercel Blob。
 
-    返回永久图片 URL。
+    Vercel Serverless 中：
+    - 不保存到本地
+    - 不使用 /tmp 作为永久存储
+    - 直接将 bytes 上传到 Blob
     """
 
     if not image_bytes:
@@ -912,37 +985,107 @@ def upload_image_to_blob(
             "图片数据为空，无法上传到 Vercel Blob。"
         )
 
+    token = get_blob_token()
+
+    if not token:
+
+        raise RuntimeError(
+            "未找到 BLOB_READ_WRITE_TOKEN。"
+            "请在 Vercel Environment Variables 中配置。"
+        )
+
+    store_id = os.getenv(
+        "BLOB_STORE_ID"
+    )
+
+    if not store_id:
+
+        print(
+            "⚠️ 未检测到 BLOB_STORE_ID，"
+            "但继续尝试使用 BLOB_READ_WRITE_TOKEN 上传。"
+        )
+
     filename = (
         f"generated/{experiment_id}/{condition}.png"
     )
 
-    try:
+    print(
+        f"☁️ 开始上传 Blob：{filename}"
+    )
 
-        client = BlobClient()
+    print(
+        f"☁️ 图片大小：{len(image_bytes) / 1024 / 1024:.2f} MB"
+    )
 
-        blob = client.put(
+    # ========================================================
+    # Vercel Blob Python SDK
+    # ========================================================
 
-            filename,
+    last_error = None
 
-            image_bytes,
+    for attempt in range(1, 4):
 
-            access="public",
+        try:
 
-            content_type="image/png",
+            client = BlobClient(
+                token=token
+            )
 
-            add_random_suffix=False,
+            blob = client.put(
 
-            overwrite=True
+                filename,
 
-        )
+                image_bytes,
 
-        return blob.url
+                access="public",
 
-    except Exception as exc:
+                content_type="image/png",
 
-        raise RuntimeError(
-            f"Vercel Blob 上传失败：{exc}"
-        ) from exc
+                add_random_suffix=False,
+
+                overwrite=True
+
+            )
+
+            blob_url = getattr(
+                blob,
+                "url",
+                None
+            )
+
+            if not blob_url:
+
+                raise RuntimeError(
+                    "Vercel Blob 上传成功但没有返回 URL。"
+                )
+
+            print(
+                f"✅ Blob 上传成功：{blob_url}"
+            )
+
+            return blob_url
+
+        except Exception as exc:
+
+            last_error = exc
+
+            print(
+                f"⚠️ Blob 上传第 {attempt}/3 次失败："
+                f"{type(exc).__name__}: {exc}"
+            )
+
+            if attempt < 3:
+
+                time.sleep(
+                    attempt * 2
+                )
+
+    raise RuntimeError(
+        "Vercel Blob 上传失败，"
+        f"已重试3次。"
+        f"最后错误："
+        f"{type(last_error).__name__}: {last_error}"
+    )
 
 
 # ============================================================
@@ -972,7 +1115,7 @@ def download_image_url(
 
         with urlopen(
             request,
-            timeout=60
+            timeout=90
         ) as response:
 
             data = response.read()
@@ -1033,14 +1176,14 @@ def generate_image(
 
         raise HTTPException(
             status_code=502,
-            detail=f"图片API调用失败：{exc}"
+            detail=f"{condition} 图片API调用失败：{exc}"
         ) from exc
 
     if not result.data:
 
         raise HTTPException(
             status_code=502,
-            detail="图片API没有返回图片数据。"
+            detail=f"{condition} 图片API没有返回图片数据。"
         )
 
     item = result.data[0]
@@ -1068,7 +1211,8 @@ def generate_image(
         try:
 
             image_bytes = base64.b64decode(
-                b64
+                b64,
+                validate=True
             )
 
             print(
@@ -1078,7 +1222,7 @@ def generate_image(
         except Exception as exc:
 
             print(
-                f"⚠️ b64_json解析失败：{exc}"
+                f"⚠️ {condition} b64_json解析失败：{exc}"
             )
 
     # ========================================================
@@ -1116,13 +1260,13 @@ def generate_image(
             status_code=502,
 
             detail=(
-                "无法识别图片API返回格式。"
+                f"{condition} 图片API返回格式无法识别。"
                 "既没有b64_json，也没有url。"
             )
         )
 
     # ========================================================
-    # 上传到 Vercel Blob
+    # 上传 Vercel Blob
     # ========================================================
 
     try:
@@ -1143,7 +1287,8 @@ def generate_image(
             status_code=502,
 
             detail=(
-                f"{condition} 图片上传Vercel Blob失败：{exc}"
+                f"{condition} 图片上传Vercel Blob失败："
+                f"{exc}"
             )
 
         ) from exc
@@ -1219,6 +1364,8 @@ def health():
 
         database_error = str(exc)
 
+    blob_token = get_blob_token()
+
     return {
 
         "status":
@@ -1237,6 +1384,13 @@ def health():
                 )
             ),
 
+        "llm_base_url_configured":
+            bool(
+                os.getenv(
+                    "LLM_BASE_URL"
+                )
+            ),
+
         "image_configured":
             bool(
                 os.getenv(
@@ -1244,17 +1398,97 @@ def health():
                 )
             ),
 
-        "blob_configured":
+        "image_base_url_configured":
             bool(
                 os.getenv(
-                    "BLOB_READ_WRITE_TOKEN"
+                    "IMAGE_BASE_URL"
                 )
-            ) or bool(
+            ),
+
+        "blob_configured":
+            bool(blob_token),
+
+        "blob_store_configured":
+            bool(
                 os.getenv(
-                    "VERCEL_OIDC_TOKEN"
+                    "BLOB_STORE_ID"
                 )
             )
     }
+
+
+# ============================================================
+# Blob 专用诊断
+# ============================================================
+
+@app.get("/api/blob-health")
+def blob_health():
+
+    token = get_blob_token()
+
+    store_id = os.getenv(
+        "BLOB_STORE_ID"
+    )
+
+    if not token:
+
+        return {
+
+            "ok":
+                False,
+
+            "message":
+                "BLOB_READ_WRITE_TOKEN 未配置。",
+
+            "token_configured":
+                False,
+
+            "store_configured":
+                bool(store_id)
+        }
+
+    try:
+
+        client = BlobClient(
+            token=token
+        )
+
+        # 不上传测试文件。
+        # 这里仅确认 SDK 可以创建客户端。
+        return {
+
+            "ok":
+                True,
+
+            "message":
+                "Vercel Blob Client 创建成功。",
+
+            "token_configured":
+                True,
+
+            "store_configured":
+                bool(store_id),
+
+            "store_id":
+                store_id
+        }
+
+    except Exception as exc:
+
+        return {
+
+            "ok":
+                False,
+
+            "message":
+                f"Vercel Blob Client 初始化失败：{exc}",
+
+            "token_configured":
+                True,
+
+            "store_configured":
+                bool(store_id)
+        }
 
 
 # ============================================================
@@ -1277,6 +1511,10 @@ def generate(
 
     print(
         "=" * 60
+    )
+
+    print(
+        f"📌 公益主题：{req.topic}"
     )
 
     matched, unmatched = choose_conditions(
@@ -1318,59 +1556,59 @@ def generate(
         timezone.utc
     )
 
+    # ========================================================
+    # 检查LLM输出
+    # ========================================================
+
+    matched_item = ai.get(
+        "matched"
+    )
+
+    unmatched_item = ai.get(
+        "unmatched"
+    )
+
+    if not matched_item:
+
+        raise HTTPException(
+            status_code=500,
+            detail="LLM缺少 matched 输出。"
+        )
+
+    if not unmatched_item:
+
+        raise HTTPException(
+            status_code=500,
+            detail="LLM缺少 unmatched 输出。"
+        )
+
+    if not matched_item.get(
+        "image_prompt"
+    ):
+
+        raise HTTPException(
+            status_code=500,
+            detail="matched 缺少 image_prompt。"
+        )
+
+    if not unmatched_item.get(
+        "image_prompt"
+    ):
+
+        raise HTTPException(
+            status_code=500,
+            detail="unmatched 缺少 image_prompt。"
+        )
+
+    # ========================================================
+    # 第二步：数据库创建实验记录
+    # ========================================================
+
     conn = None
 
     try:
 
         conn = db()
-
-        # ====================================================
-        # 检查LLM输出
-        # ====================================================
-
-        matched_item = ai.get(
-            "matched"
-        )
-
-        unmatched_item = ai.get(
-            "unmatched"
-        )
-
-        if not matched_item:
-
-            raise HTTPException(
-                status_code=500,
-                detail="LLM缺少 matched 输出。"
-            )
-
-        if not unmatched_item:
-
-            raise HTTPException(
-                status_code=500,
-                detail="LLM缺少 unmatched 输出。"
-            )
-
-        if not matched_item.get(
-            "image_prompt"
-        ):
-
-            raise HTTPException(
-                status_code=500,
-                detail="matched 缺少 image_prompt。"
-            )
-
-        if not unmatched_item.get(
-            "image_prompt"
-        ):
-
-            raise HTTPException(
-                status_code=500,
-                detail="unmatched 缺少 image_prompt。"
-            )
-
-        # ====================================================
-        # 创建实验记录
-        # ====================================================
 
         conn.execute(
 
@@ -1426,24 +1664,52 @@ def generate(
             )
         )
 
-        # ====================================================
-        # 第二步：并行生成两张图片
-        # ====================================================
+        conn.commit()
 
-        image_tasks = {
+    except Exception as exc:
 
-            "matched":
-                matched_item,
+        if conn:
 
-            "unmatched":
-                unmatched_item
-        }
+            conn.rollback()
 
-        image_results = {}
+            conn.close()
 
-        print(
-            "\n🖼️ 开始并行生成两张图片..."
-        )
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=(
+                f"实验数据库记录创建失败：{exc}"
+            )
+
+        ) from exc
+
+    finally:
+
+        if conn:
+
+            conn.close()
+
+    # ========================================================
+    # 第三步：并行生成两张图片
+    # ========================================================
+
+    image_tasks = {
+
+        "matched":
+            matched_item,
+
+        "unmatched":
+            unmatched_item
+    }
+
+    image_results = {}
+
+    print(
+        "\n🖼️ 开始并行生成两张图片..."
+    )
+
+    try:
 
         with ThreadPoolExecutor(
             max_workers=2
@@ -1490,38 +1756,61 @@ def generate(
                 except Exception as exc:
 
                     print(
-                        f"❌ {condition} 图片生成失败：{exc}"
+                        f"❌ {condition} 图片生成失败："
+                        f"{type(exc).__name__}: {exc}"
                     )
 
                     raise
 
-        # ====================================================
-        # 第三步：写入广告数据
-        # ====================================================
+    except HTTPException:
 
-        result = {
+        raise
 
-            "experiment_id":
-                experiment_id,
+    except Exception as exc:
 
-            "topic":
-                req.topic,
+        raise HTTPException(
 
-            "mft":
-                scores_dict(req.mft),
+            status_code=502,
 
-            "matched_foundation":
-                matched,
+            detail=(
+                f"图片生成阶段失败：{exc}"
+            )
 
-            "unmatched_foundation":
-                unmatched,
+        ) from exc
 
-            "matched":
-                None,
+    # ========================================================
+    # 第四步：写入广告数据
+    # ========================================================
 
-            "unmatched":
-                None
-        }
+    result = {
+
+        "experiment_id":
+            experiment_id,
+
+        "topic":
+            req.topic,
+
+        "mft":
+            scores_dict(req.mft),
+
+        "matched_foundation":
+            matched,
+
+        "unmatched_foundation":
+            unmatched,
+
+        "matched":
+            None,
+
+        "unmatched":
+            None
+    }
+
+    conn = None
+
+    try:
+
+        conn = db()
 
         for condition, foundation, key in [
 
@@ -1640,40 +1929,18 @@ def generate(
 
         conn.commit()
 
-        print(
-            "\n" +
-            "=" * 60
-        )
-
-        print(
-            "🎉 整个实验生成完成"
-        )
-
-        print(
-            "=" * 60 +
-            "\n"
-        )
-
-        return result
-
-    except HTTPException:
-
-        if conn:
-            conn.rollback()
-
-        raise
-
     except Exception as exc:
 
         if conn:
+
             conn.rollback()
 
         raise HTTPException(
 
-            status_code=502,
+            status_code=500,
 
             detail=(
-                f"实验生成失败：{exc}"
+                f"广告数据保存失败：{exc}"
             )
 
         ) from exc
@@ -1681,7 +1948,24 @@ def generate(
     finally:
 
         if conn:
+
             conn.close()
+
+    print(
+        "\n" +
+        "=" * 60
+    )
+
+    print(
+        "🎉 整个实验生成完成"
+    )
+
+    print(
+        "=" * 60 +
+        "\n"
+    )
+
+    return result
 
 
 # ============================================================
@@ -1778,6 +2062,7 @@ def evaluate(
     except HTTPException:
 
         if conn:
+
             conn.rollback()
 
         raise
@@ -1785,6 +2070,7 @@ def evaluate(
     except Exception as exc:
 
         if conn:
+
             conn.rollback()
 
         raise HTTPException(
@@ -1800,6 +2086,7 @@ def evaluate(
     finally:
 
         if conn:
+
             conn.close()
 
 
@@ -1958,6 +2245,7 @@ def get_history():
     finally:
 
         if conn:
+
             conn.close()
 
 
@@ -2196,4 +2484,44 @@ def get_history_detail(
     finally:
 
         if conn:
+
             conn.close()
+
+
+# ============================================================
+# Vercel / ASGI
+# ============================================================
+
+# 不需要 uvicorn.run()
+#
+# Vercel 会自动发现：
+#
+#     app = FastAPI(...)
+#
+# 并通过 ASGI 运行。
+#
+# 本地运行时使用：
+#
+#     uvicorn backend.main:app --reload
+#
+# 或：
+#
+#     python -m uvicorn backend.main:app --reload
+#
+# ============================================================
+
+
+if __name__ == "__main__":
+
+    import uvicorn
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(
+            os.getenv(
+                "PORT",
+                "8000"
+            )
+        )
+    )
