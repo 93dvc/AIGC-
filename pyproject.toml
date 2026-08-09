@@ -8,7 +8,9 @@ dependencies = [
     "uvicorn[standard]",
     "openai",
     "python-dotenv",
-    "pydantic"
+    "pydantic",
+    "psycopg[binary]",
+    "vercel"
 ]
 
 [tool.vercel]
