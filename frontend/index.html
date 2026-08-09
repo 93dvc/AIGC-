@@ -1,471 +1,370 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-
 <head>
-
-    <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
-    <title>AIGC 个性化公益广告实验平台</title>
-
-    <style>
-
-        * {
-            box-sizing: border-box;
-        }
-
-        body {
-            margin: 0;
-            font-family:
-                -apple-system,
-                BlinkMacSystemFont,
-                "Segoe UI",
-                "Microsoft YaHei",
-                sans-serif;
-
-            background:
-                linear-gradient(
-                    135deg,
-                    #f4f7fb,
-                    #eef2f7
-                );
-
-            color: #1f2937;
-        }
-
-        .container {
-            width: min(1180px, 94%);
-            margin: 0 auto;
-            padding: 35px 0 70px;
-        }
-
-        .hero {
-            background: white;
-            border-radius: 22px;
-            padding: 35px;
-            box-shadow:
-                0 15px 45px rgba(15, 23, 42, 0.08);
-
-            margin-bottom: 25px;
-        }
-
-        h1 {
-            margin: 0 0 15px;
-            font-size: 34px;
-            color: #111827;
-        }
-
-        .subtitle {
-            color: #64748b;
-            line-height: 1.8;
-            margin-bottom: 12px;
-        }
-
-        .email {
-            color: #2563eb;
-            font-weight: 600;
-        }
-
-        button {
-            border: none;
-            cursor: pointer;
-            font-family: inherit;
-        }
-
-        .history-btn {
-            margin-top: 20px;
-            padding: 11px 18px;
-            border-radius: 10px;
-            background: #f1f5f9;
-            color: #334155;
-            font-weight: 600;
-        }
-
-        .history-btn:hover {
-            background: #e2e8f0;
-        }
-
-        .panel {
-            background: white;
-            border-radius: 22px;
-            padding: 30px;
-            box-shadow:
-                0 15px 45px rgba(15, 23, 42, 0.07);
-
-            margin-bottom: 25px;
-        }
-
-        h2 {
-            margin-top: 0;
-        }
-
-        label {
-            display: block;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-
-        input[type="text"] {
-            width: 100%;
-            padding: 14px 16px;
-            border: 1px solid #dbe2ea;
-            border-radius: 12px;
-            font-size: 16px;
-            outline: none;
-        }
-
-        input[type="text"]:focus {
-            border-color: #2563eb;
-        }
-
-        .slider-row {
-            margin-top: 24px;
-        }
-
-        .slider-title {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 8px;
-        }
-
-        .slider-title span:first-child {
-            font-weight: 600;
-        }
-
-        .slider-value {
-            color: #2563eb;
-            font-weight: 700;
-        }
-
-        input[type="range"] {
-            width: 100%;
-        }
-
-        .profile {
-            margin-top: 25px;
-            padding: 20px;
-            border-radius: 15px;
-            background: #f8fafc;
-        }
-
-        .profile-grid {
-            display: grid;
-            grid-template-columns:
-                repeat(5, 1fr);
-
-            gap: 12px;
-
-            margin-top: 15px;
-        }
-
-        .profile-item {
-            background: white;
-            padding: 14px;
-            border-radius: 12px;
-            text-align: center;
-            border: 1px solid #e5e7eb;
-        }
-
-        .profile-score {
-            font-size: 22px;
-            font-weight: 800;
-            margin-top: 5px;
-            color: #2563eb;
-        }
-
-        .dominant {
-            margin-top: 15px;
-            color: #64748b;
-        }
-
-        .primary {
-            width: 100%;
-            margin-top: 25px;
-            padding: 15px 20px;
-            border-radius: 13px;
-            background: #2563eb;
-            color: white;
-            font-size: 16px;
-            font-weight: 700;
-            transition: 0.2s;
-        }
-
-        .primary:hover {
-            background: #1d4ed8;
-        }
-
-        .primary:disabled {
-            background: #94a3b8;
-            cursor: not-allowed;
-        }
-
-        .loader-panel {
-            display: none;
-        }
-
-        .loader {
-            width: 44px;
-            height: 44px;
-            border: 4px solid #e5e7eb;
-            border-top-color: #2563eb;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 20px;
-        }
-
-        @keyframes spin {
-
-            to {
-                transform: rotate(360deg);
-            }
-
-        }
-
-        .status-text {
-            font-size: 17px;
-            font-weight: 600;
-        }
-
-        .status-detail {
-            margin-top: 8px;
-            color: #64748b;
-            font-size: 14px;
-        }
-
-        .progress {
-            margin-top: 18px;
-            height: 10px;
-            background: #e5e7eb;
-            border-radius: 10px;
-            overflow: hidden;
-        }
-
-        .progress-bar {
-            height: 100%;
-            width: 0%;
-            background: #2563eb;
-            transition: width 0.5s ease;
-        }
-
-        .result {
-            display: none;
-        }
-
-        .ads-grid {
-            display: grid;
-            grid-template-columns:
-                repeat(2, 1fr);
-
-            gap: 25px;
-        }
-
-        .ad-card {
-            background: white;
-            border-radius: 20px;
-            overflow: hidden;
-            box-shadow:
-                0 15px 40px rgba(15, 23, 42, 0.08);
-        }
-
-        .ad-card img {
-            width: 100%;
-            display: block;
-            background: #f1f5f9;
-        }
-
-        .ad-body {
-            padding: 25px;
-        }
-
-        .badge {
-            display: inline-block;
-            padding: 7px 12px;
-            border-radius: 999px;
-            background: #eff6ff;
-            color: #2563eb;
-            font-weight: 700;
-            font-size: 13px;
-        }
-
-        .copy {
-            margin-top: 18px;
-            font-size: 24px;
-            line-height: 1.5;
-            font-weight: 800;
-            color: #111827;
-        }
-
-        .strategy {
-            margin-top: 20px;
-            padding: 18px;
-            border-radius: 13px;
-            background: #f8fafc;
-            line-height: 1.7;
-            font-size: 14px;
-        }
-
-        details {
-            margin-top: 20px;
-        }
-
-        summary {
-            cursor: pointer;
-            font-weight: 600;
-            color: #475569;
-        }
-
-        .prompt {
-            margin-top: 12px;
-            background: #0f172a;
-            color: #e2e8f0;
-            padding: 16px;
-            border-radius: 12px;
-            white-space: pre-wrap;
-            word-break: break-word;
-            font-size: 12px;
-            line-height: 1.6;
-        }
-
-        .eval {
-            margin-top: 25px;
-            padding-top: 20px;
-            border-top: 1px solid #e5e7eb;
-        }
-
-        .eval-grid {
-            display: grid;
-            grid-template-columns:
-                repeat(2, 1fr);
-
-            gap: 15px;
-            margin-top: 15px;
-        }
-
-        .eval-item label {
-            font-size: 14px;
-        }
-
-        select {
-            width: 100%;
-            padding: 10px;
-            border-radius: 10px;
-            border: 1px solid #dbe2ea;
-            background: white;
-        }
-
-        .history {
-            display: none;
-        }
-
-        .history-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-
-        .back-btn {
-            padding: 10px 15px;
-            border-radius: 10px;
-            background: #f1f5f9;
-        }
-
-        .history-list {
-            display: grid;
-            gap: 15px;
-        }
-
-        .history-item {
-            padding: 20px;
-            border-radius: 15px;
-            background: #f8fafc;
-            border: 1px solid #e5e7eb;
-            cursor: pointer;
-        }
-
-        .history-item:hover {
-            border-color: #2563eb;
-        }
-
-        .history-topic {
-            font-size: 18px;
-            font-weight: 700;
-        }
-
-        .history-meta {
-            margin-top: 8px;
-            color: #64748b;
-            font-size: 13px;
-        }
-
-        .history-progress {
-            margin-top: 10px;
-        }
-
-        .error-box {
-            display: none;
-            margin-top: 20px;
-            padding: 15px;
-            background: #fef2f2;
-            border: 1px solid #fecaca;
-            color: #b91c1c;
-            border-radius: 12px;
-            white-space: pre-wrap;
-        }
-
-        .detail-view {
-            display: none;
-        }
-
-        .detail-images {
-            display: grid;
-            grid-template-columns:
-                repeat(2, 1fr);
-
-            gap: 20px;
-        }
-
-        .detail-images img {
-            width: 100%;
-            border-radius: 15px;
-        }
-
-        .muted {
-            color: #64748b;
-        }
-
-        @media (max-width: 800px) {
-
-            h1 {
-                font-size: 26px;
-            }
-
-            .profile-grid {
-                grid-template-columns:
-                    repeat(2, 1fr);
-            }
-
-            .ads-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .eval-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .detail-images {
-                grid-template-columns: 1fr;
-            }
-
-        }
-
-    </style>
-
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+<title>AIGC 个性化公益广告实验平台</title>
+
+<style>
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        "Microsoft YaHei",
+        sans-serif;
+
+    background:
+        linear-gradient(
+            135deg,
+            #f4f7fb,
+            #eef2f7
+        );
+
+    color: #1f2937;
+}
+
+.container {
+    width: min(
+        1200px,
+        calc(100% - 32px)
+    );
+
+    margin: 30px auto 60px;
+}
+
+.header {
+    background: white;
+    border-radius: 20px;
+    padding: 30px;
+    margin-bottom: 20px;
+
+    box-shadow:
+        0 10px 35px
+        rgba(0,0,0,.06);
+}
+
+h1 {
+    margin: 0 0 12px;
+    font-size: 30px;
+}
+
+.subtitle {
+    color: #64748b;
+    line-height: 1.8;
+}
+
+.email {
+    margin-top: 12px;
+    color: #2563eb;
+    font-weight: 600;
+}
+
+button {
+    border: 0;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 15px;
+}
+
+.primary {
+    width: 100%;
+    padding: 14px;
+    background: #2563eb;
+    color: white;
+    font-weight: 700;
+}
+
+.primary:hover {
+    background: #1d4ed8;
+}
+
+.history-btn,
+.back-btn {
+    padding: 10px 16px;
+    background: #eef2ff;
+    color: #3730a3;
+}
+
+.section {
+    background: white;
+    border-radius: 20px;
+    padding: 26px;
+    margin-bottom: 20px;
+
+    box-shadow:
+        0 10px 35px
+        rgba(0,0,0,.05);
+}
+
+label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 700;
+}
+
+input[type="text"] {
+    width: 100%;
+    padding: 13px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    font-size: 16px;
+    margin-bottom: 20px;
+}
+
+.slider-row {
+    margin-bottom: 20px;
+}
+
+.slider-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.slider {
+    width: 100%;
+}
+
+.profile {
+    margin: 22px 0;
+    padding: 18px;
+    background: #f8fafc;
+    border-radius: 14px;
+}
+
+.profile-item {
+    display: inline-block;
+    margin: 6px;
+    padding: 7px 12px;
+    background: white;
+    border-radius: 8px;
+}
+
+.muted {
+    color: #64748b;
+    margin-top: 10px;
+}
+
+.loader {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+
+    border: 4px solid #e5e7eb;
+    border-top-color: #2563eb;
+
+    animation: spin 1s linear infinite;
+
+    margin: 10px auto;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.hidden {
+    display: none !important;
+}
+
+.progress {
+    width: 100%;
+    height: 8px;
+    background: #e5e7eb;
+    border-radius: 20px;
+    overflow: hidden;
+    margin-top: 15px;
+}
+
+.progress-bar {
+    height: 100%;
+    width: 0;
+    background: #2563eb;
+    transition: width .4s ease;
+}
+
+.status-text {
+    text-align: center;
+    padding: 10px;
+    color: #475569;
+}
+
+.ads-grid {
+    display: grid;
+
+    grid-template-columns:
+        repeat(
+            2,
+            minmax(0, 1fr)
+        );
+
+    gap: 20px;
+}
+
+.ad-card {
+    background: white;
+    border-radius: 20px;
+    overflow: hidden;
+
+    box-shadow:
+        0 10px 35px
+        rgba(0,0,0,.07);
+}
+
+.ad-card img {
+    width: 100%;
+    display: block;
+    background: #f1f5f9;
+}
+
+.ad-body {
+    padding: 22px;
+}
+
+.badge {
+    display: inline-block;
+    padding: 6px 10px;
+    border-radius: 8px;
+
+    background: #dbeafe;
+    color: #1d4ed8;
+
+    font-size: 13px;
+    font-weight: 700;
+
+    margin-bottom: 12px;
+}
+
+.copy {
+    font-size: 22px;
+    font-weight: 800;
+    line-height: 1.5;
+    margin-bottom: 15px;
+}
+
+.strategy {
+    color: #475569;
+    line-height: 1.7;
+    white-space: pre-wrap;
+}
+
+details {
+    margin-top: 15px;
+}
+
+summary {
+    cursor: pointer;
+    font-weight: 700;
+}
+
+.prompt {
+    margin-top: 10px;
+    background: #0f172a;
+    color: #e2e8f0;
+
+    padding: 14px;
+    border-radius: 10px;
+
+    white-space: pre-wrap;
+    word-break: break-word;
+
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.eval {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #e5e7eb;
+}
+
+.eval-grid {
+    display: grid;
+
+    grid-template-columns:
+        repeat(
+            2,
+            minmax(0, 1fr)
+        );
+
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.eval-item select {
+    width: 100%;
+    padding: 10px;
+
+    border:
+        1px solid
+        #d1d5db;
+
+    border-radius: 8px;
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.history-item {
+    padding: 18px;
+    background: #f8fafc;
+    border-radius: 12px;
+    margin-bottom: 12px;
+    cursor: pointer;
+}
+
+.history-item:hover {
+    background: #eef2ff;
+}
+
+.history-topic {
+    font-weight: 800;
+    font-size: 17px;
+}
+
+.history-time {
+    color: #64748b;
+    margin-top: 5px;
+    font-size: 13px;
+}
+
+.history-detail {
+    line-height: 1.7;
+}
+
+@media (max-width: 800px) {
+
+    .ads-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .eval-grid {
+        grid-template-columns: 1fr;
+    }
+
+    h1 {
+        font-size: 24px;
+    }
+}
+
+</style>
 </head>
 
 
@@ -473,51 +372,41 @@
 
 <div class="container">
 
-    <!-- ================================================= -->
-    <!-- 首页 -->
-    <!-- ================================================= -->
+    <div class="header">
 
-    <div
-        id="currentView"
-    >
+        <h1>
+            AIGC 个性化公益广告实验平台
+        </h1>
 
-        <div class="hero">
-
-            <h1>
-                AIGC 个性化公益广告实验平台
-            </h1>
-
-            <div class="subtitle">
-
-                人工设定 MFT 道德画像
-                →
-                AI生成传播策略、文案与视觉Prompt
-                →
-                生成匹配 / 不匹配公益海报
-
-            </div>
-
-            <div class="email">
-                一起做得更好：li93dvc@gmail.com
-            </div>
-
-            <button
-                class="history-btn"
-                onclick="showHistory()"
-            >
-
-                📚 历史实验
-
-            </button>
-
+        <div class="subtitle">
+            人工设定 MFT 道德画像
+            →
+            AI生成传播策略、文案与视觉Prompt
+            →
+            生成匹配 / 不匹配公益海报
         </div>
 
+        <div class="email">
+            一起做得更好：li93dvc@gmail.com
+        </div>
 
-        <!-- ================================================= -->
-        <!-- 输入 -->
-        <!-- ================================================= -->
+        <br>
 
-        <div class="panel">
+        <button
+            class="history-btn"
+            onclick="showHistory()"
+        >
+            📚 历史实验
+        </button>
+
+    </div>
+
+
+    <!-- 当前实验 -->
+
+    <div id="currentView">
+
+        <div class="section">
 
             <h2>
                 ① 实验输入
@@ -538,16 +427,13 @@
             <div class="profile">
 
                 <strong>
-                    当前 MFT 画像
+                    当前MFT画像
                 </strong>
 
-                <div
-                    id="profile"
-                    class="profile-grid"
-                ></div>
+                <div id="profile"></div>
 
                 <div
-                    class="dominant"
+                    class="muted"
                     id="dominant"
                 ></div>
 
@@ -556,26 +442,22 @@
             <button
                 class="primary"
                 id="generate"
+                onclick="startExperiment()"
             >
-
                 生成匹配 / 不匹配广告
-
             </button>
 
         </div>
 
 
-        <!-- ================================================= -->
-        <!-- 生成状态 -->
-        <!-- ================================================= -->
-
         <div
-            class="panel loader-panel"
-            id="loaderPanel"
+            class="section hidden"
+            id="loadingSection"
         >
 
             <div
                 class="loader"
+                id="loader"
             ></div>
 
             <div class="status-text">
@@ -585,305 +467,62 @@
                 </div>
 
                 <div
-                    class="status-detail"
-                    id="statusDetail"
+                    class="progress"
+                    id="progress"
                 >
-                    正在初始化任务
+
+                    <div
+                        class="progress-bar"
+                        id="progressBar"
+                    ></div>
+
                 </div>
-
-            </div>
-
-            <div
-                class="progress"
-            >
-
-                <div
-                    class="progress-bar"
-                    id="progressBar"
-                ></div>
 
             </div>
 
         </div>
 
 
-        <!-- ================================================= -->
-        <!-- 错误 -->
-        <!-- ================================================= -->
-
         <div
-            class="panel error-box"
-            id="errorBox"
-        ></div>
-
-
-        <!-- ================================================= -->
-        <!-- 结果 -->
-        <!-- ================================================= -->
-
-        <div
-            class="result"
-            id="result"
+            class="section"
+            id="emptySection"
         >
 
-            <div class="panel">
+            先输入公益主题和五维 MFT 分数。
 
-                <h2>
-                    ② 实验结果
-                </h2>
+            <br><br>
 
-                <div
-                    id="resultSummary"
-                    class="muted"
-                ></div>
+            然后点击“生成匹配 / 不匹配广告”。
 
-            </div>
+            <br><br>
 
+            系统将自动生成：
 
-            <div class="ads-grid">
+            <br>
 
-                <!-- matched -->
-
-                <div class="ad-card">
-
-                    <img
-                        id="matchedImg"
-                        alt="匹配条件公益海报"
-                    >
-
-                    <div class="ad-body">
-
-                        <div
-                            class="badge"
-                            id="matchedBadge"
-                        >
-                            匹配条件
-                        </div>
-
-                        <div
-                            class="copy"
-                            id="matchedCopy"
-                        ></div>
-
-                        <div
-                            class="strategy"
-                            id="matchedStrategy"
-                        ></div>
-
-                        <details>
-
-                            <summary>
-                                查看 AI 生成的视觉 Prompt
-                            </summary>
-
-                            <div
-                                class="prompt"
-                                id="matchedPrompt"
-                            ></div>
-
-                        </details>
-
-                        <div class="eval">
-
-                            <strong>
-                                广告评价
-                            </strong>
-
-                            <div class="eval-grid">
-
-                                <div class="eval-item">
-
-                                    <label>
-                                        道德共鸣
-                                    </label>
-
-                                    <select
-                                        id="m_moral"
-                                    ></select>
-
-                                </div>
-
-                                <div class="eval-item">
-
-                                    <label>
-                                        情感反应
-                                    </label>
-
-                                    <select
-                                        id="m_emotion"
-                                    ></select>
-
-                                </div>
-
-                                <div class="eval-item">
-
-                                    <label>
-                                        说服效果
-                                    </label>
-
-                                    <select
-                                        id="m_persuasion"
-                                    ></select>
-
-                                </div>
-
-                                <div class="eval-item">
-
-                                    <label>
-                                        行为意愿
-                                    </label>
-
-                                    <select
-                                        id="m_behavior"
-                                    ></select>
-
-                                </div>
-
-                            </div>
-
-                            <button
-                                class="primary"
-                                onclick="submitEval('matched')"
-                            >
-                                提交评价
-                            </button>
-
-                        </div>
-
-                    </div>
-
-                </div>
-
-
-                <!-- unmatched -->
-
-                <div class="ad-card">
-
-                    <img
-                        id="unmatchedImg"
-                        alt="不匹配条件公益海报"
-                    >
-
-                    <div class="ad-body">
-
-                        <div
-                            class="badge"
-                            id="unmatchedBadge"
-                        >
-                            不匹配条件
-                        </div>
-
-                        <div
-                            class="copy"
-                            id="unmatchedCopy"
-                        ></div>
-
-                        <div
-                            class="strategy"
-                            id="unmatchedStrategy"
-                        ></div>
-
-                        <details>
-
-                            <summary>
-                                查看 AI 生成的视觉 Prompt
-                            </summary>
-
-                            <div
-                                class="prompt"
-                                id="unmatchedPrompt"
-                            ></div>
-
-                        </details>
-
-                        <div class="eval">
-
-                            <strong>
-                                广告评价
-                            </strong>
-
-                            <div class="eval-grid">
-
-                                <div class="eval-item">
-
-                                    <label>
-                                        道德共鸣
-                                    </label>
-
-                                    <select
-                                        id="u_moral"
-                                    ></select>
-
-                                </div>
-
-                                <div class="eval-item">
-
-                                    <label>
-                                        情感反应
-                                    </label>
-
-                                    <select
-                                        id="u_emotion"
-                                    ></select>
-
-                                </div>
-
-                                <div class="eval-item">
-
-                                    <label>
-                                        说服效果
-                                    </label>
-
-                                    <select
-                                        id="u_persuasion"
-                                    ></select>
-
-                                </div>
-
-                                <div class="eval-item">
-
-                                    <label>
-                                        行为意愿
-                                    </label>
-
-                                    <select
-                                        id="u_behavior"
-                                    ></select>
-
-                                </div>
-
-                            </div>
-
-                            <button
-                                class="primary"
-                                onclick="submitEval('unmatched')"
-                            >
-                                提交评价
-                            </button>
-
-                        </div>
-
-                    </div>
-
-                </div>
-
-            </div>
+            <b>
+                两套不同MFT道德诉求的公益广告
+            </b>
 
         </div>
+
+
+        <div
+            id="results"
+            class="ads-grid"
+        ></div>
 
     </div>
 
 
-    <!-- ================================================= -->
     <!-- 历史 -->
-    <!-- ================================================= -->
 
     <div
         id="historyView"
-        class="history"
+        class="hidden"
     >
 
-        <div class="panel">
+        <div class="section">
 
             <div class="history-header">
 
@@ -901,42 +540,8 @@
             </div>
 
             <div
-                class="history-list"
                 id="historyList"
             ></div>
-
-        </div>
-
-    </div>
-
-
-    <!-- ================================================= -->
-    <!-- 历史详情 -->
-    <!-- ================================================= -->
-
-    <div
-        id="detailView"
-        class="detail-view"
-    >
-
-        <div class="panel">
-
-            <div class="history-header">
-
-                <h2>
-                    📖 实验详情
-                </h2>
-
-                <button
-                    class="back-btn"
-                    onclick="showHistory()"
-                >
-                    ← 返回历史记录
-                </button>
-
-            </div>
-
-            <div id="detailContent"></div>
 
         </div>
 
@@ -947,59 +552,25 @@
 
 <script>
 
-const foundationNames = {
+const FOUNDATIONS = {
 
     care: "关怀 / 伤害",
-
     fairness: "公平 / 欺骗",
-
     loyalty: "忠诚 / 背叛",
-
     authority: "权威 / 颠覆",
-
     sanctity: "神圣 / 堕落"
 
 };
 
 
-const foundationLabels = {
+const SLIDERS = [
+    ["care", "Care / Harm"],
+    ["fairness", "Fairness / Cheating"],
+    ["loyalty", "Loyalty / Betrayal"],
+    ["authority", "Authority / Subversion"],
+    ["sanctity", "Sanctity / Degradation"]
+];
 
-    care: "Care",
-
-    fairness: "Fairness",
-
-    loyalty: "Loyalty",
-
-    authority: "Authority",
-
-    sanctity: "Sanctity"
-
-};
-
-
-const mftValues = {
-
-    care: 8,
-
-    fairness: 5,
-
-    loyalty: 5,
-
-    authority: 5,
-
-    sanctity: 5
-
-};
-
-
-let currentExperimentId = null;
-
-let polling = false;
-
-
-/* =========================================================
-   创建滑块
-========================================================= */
 
 function createSliders() {
 
@@ -1010,8 +581,8 @@ function createSliders() {
 
     container.innerHTML = "";
 
-    Object.keys(mftValues)
-        .forEach(key => {
+    SLIDERS.forEach(
+        ([key, label]) => {
 
             const row =
                 document.createElement(
@@ -1023,28 +594,27 @@ function createSliders() {
 
             row.innerHTML = `
 
-                <div class="slider-title">
+                <div class="slider-header">
 
                     <span>
-                        ${foundationNames[key]}
+                        ${label}
                     </span>
 
-                    <span
-                        class="slider-value"
-                        id="${key}Value"
-                    >
-                        ${mftValues[key]}
-                    </span>
+                    <strong id="${key}Value">
+                        5
+                    </strong>
 
                 </div>
 
                 <input
+                    class="slider"
+                    id="${key}"
                     type="range"
                     min="0"
                     max="10"
                     step="0.1"
-                    value="${mftValues[key]}"
-                    id="${key}"
+                    value="5"
+                    oninput="updateProfile()"
                 >
 
             `;
@@ -1053,23 +623,12 @@ function createSliders() {
                 row
             );
 
-            document
-                .getElementById(key)
-                .addEventListener(
-                    "input",
-                    updateProfile
-                );
-
-        });
+        }
+    );
 
     updateProfile();
-
 }
 
-
-/* =========================================================
-   MFT画像
-========================================================= */
 
 function getMFT() {
 
@@ -1077,37 +636,37 @@ function getMFT() {
 
         care:
             Number(
-                document
-                    .getElementById("care")
-                    .value
+                document.getElementById(
+                    "care"
+                ).value
             ),
 
         fairness:
             Number(
-                document
-                    .getElementById("fairness")
-                    .value
+                document.getElementById(
+                    "fairness"
+                ).value
             ),
 
         loyalty:
             Number(
-                document
-                    .getElementById("loyalty")
-                    .value
+                document.getElementById(
+                    "loyalty"
+                ).value
             ),
 
         authority:
             Number(
-                document
-                    .getElementById("authority")
-                    .value
+                document.getElementById(
+                    "authority"
+                ).value
             ),
 
         sanctity:
             Number(
-                document
-                    .getElementById("sanctity")
-                    .value
+                document.getElementById(
+                    "sanctity"
+                ).value
             )
 
     };
@@ -1115,127 +674,142 @@ function getMFT() {
 }
 
 
-/* =========================================================
-   更新画像
-========================================================= */
-
 function updateProfile() {
 
-    const scores =
+    const mft =
         getMFT();
 
-    Object.keys(scores)
-        .forEach(key => {
+    let html = "";
 
-            document
-                .getElementById(
-                    key + "Value"
-                )
-                .textContent =
-                scores[key];
+    for (
+        const [key, label]
+        of SLIDERS
+    ) {
 
-        });
+        const value =
+            mft[key];
 
-    const profile =
         document.getElementById(
-            "profile"
-        );
+            `${key}Value`
+        ).textContent =
+            value;
 
-    profile.innerHTML = "";
+        html += `
 
-    Object.entries(scores)
-        .forEach(([key, value]) => {
+            <span class="profile-item">
 
-            const item =
-                document.createElement(
-                    "div"
-                );
+                ${label}：
 
-            item.className =
-                "profile-item";
-
-            item.innerHTML = `
-
-                <div>
-                    ${foundationLabels[key]}
-                </div>
-
-                <div class="profile-score">
+                <b>
                     ${value}
-                </div>
+                </b>
 
-            `;
+            </span>
 
-            profile.appendChild(
-                item
-            );
+        `;
 
-        });
+    }
+
+    document.getElementById(
+        "profile"
+    ).innerHTML = html;
 
     const sorted =
-        Object.entries(scores)
-            .sort(
-                (a, b) =>
-                    b[1] - a[1]
-            );
+        Object.entries(
+            mft
+        ).sort(
+            (a,b) => b[1] - a[1]
+        );
 
-    const highest =
+    const max =
         sorted[0];
 
-    const lowest =
+    const min =
         sorted[sorted.length - 1];
 
-    document
-        .getElementById(
-            "dominant"
-        )
-        .innerHTML =
-
-        `当前最高道德基础：
-        <b>${foundationNames[highest[0]]}</b>
-        (${highest[1]})
-        ，
-        最低道德基础：
-        <b>${foundationNames[lowest[0]]}</b>
-        (${lowest[1]})`;
+    document.getElementById(
+        "dominant"
+    ).textContent =
+        `最高：${FOUNDATIONS[max[0]]} (${max[1]})　` +
+        `最低：${FOUNDATIONS[min[0]]} (${min[1]})`;
 
 }
 
 
-/* =========================================================
-   生成
-========================================================= */
+function setStatus(
+    text,
+    progress
+) {
 
-document
-    .getElementById("generate")
-    .addEventListener(
-        "click",
-        startGeneration
-    );
+    document.getElementById(
+        "statusMain"
+    ).textContent =
+        text;
+
+    document.getElementById(
+        "progressBar"
+    ).style.width =
+        `${progress}%`;
+
+}
 
 
-async function startGeneration() {
+async function api(
+    url,
+    options = {}
+) {
+
+    const response =
+        await fetch(
+            url,
+            {
+                ...options,
+                headers: {
+                    "Content-Type":
+                        "application/json",
+                    ...(options.headers || {})
+                }
+            }
+        );
+
+    let data;
+
+    try {
+        data =
+            await response.json();
+    }
+    catch {
+        data = {};
+    }
+
+    if (!response.ok) {
+
+        throw new Error(
+            data.detail ||
+            data.message ||
+            `HTTP ${response.status}`
+        );
+
+    }
+
+    return data;
+}
+
+
+async function startExperiment() {
 
     const topic =
-        document
-            .getElementById("topic")
-            .value
-            .trim();
+        document.getElementById(
+            "topic"
+        ).value.trim();
 
-    if (!topic) {
+    if (topic.length < 2) {
 
         alert(
             "请输入公益广告主题。"
         );
 
         return;
-
-    }
-
-    if (polling) {
-
-        return;
-
     }
 
     const button =
@@ -1245,677 +819,580 @@ async function startGeneration() {
 
     button.disabled = true;
 
-    document
-        .getElementById(
-            "result"
-        )
-        .style.display = "none";
-
-    document
-        .getElementById(
-            "errorBox"
-        )
-        .style.display = "none";
-
-    document
-        .getElementById(
-            "loaderPanel"
-        )
-        .style.display = "block";
-
-    setProgress(
-        5,
-        "正在创建实验……",
-        "正在初始化实验任务"
+    document.getElementById(
+        "loadingSection"
+    ).classList.remove(
+        "hidden"
     );
+
+    document.getElementById(
+        "emptySection"
+    ).classList.add(
+        "hidden"
+    );
+
+    document.getElementById(
+        "results"
+    ).innerHTML = "";
 
     try {
 
-        const response =
-            await fetch(
+        // ------------------------------------------------
+        // 第一步：LLM
+        // ------------------------------------------------
+
+        setStatus(
+            "🤖 AI正在生成两套公益广告策略……",
+            10
+        );
+
+        const strategy =
+            await api(
                 "/api/generate",
                 {
-
                     method: "POST",
 
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body: JSON.stringify({
-
-                        topic: topic,
-
-                        mft: getMFT()
-
-                    })
-
+                    body:
+                        JSON.stringify(
+                            {
+                                topic,
+                                mft:
+                                    getMFT()
+                            }
+                        )
                 }
             );
 
-        const data =
-            await response.json();
 
-        if (!response.ok) {
+        const experimentId =
+            strategy.experiment_id;
 
-            throw new Error(
-                data.detail ||
-                "创建实验失败"
-            );
 
-        }
+        // ------------------------------------------------
+        // 第二步：两张图片并行
+        // ------------------------------------------------
 
-        currentExperimentId =
-            data.experiment_id;
-
-        polling = true;
-
-        await pollStatus();
-
-    }
-
-    catch (error) {
-
-        showError(
-            error.message
+        setStatus(
+            "🎨 两张公益海报正在并行生成……",
+            35
         );
 
-        button.disabled = false;
 
-        polling = false;
-
-    }
-
-}
-
-
-/* =========================================================
-   轮询
-========================================================= */
-
-async function pollStatus() {
-
-    if (!currentExperimentId) {
-
-        return;
-
-    }
-
-    try {
-
-        const response =
-            await fetch(
-
-                `/api/generate/status/${currentExperimentId}`,
-
+        const matchedPromise =
+            api(
+                "/api/generate-image",
                 {
+                    method: "POST",
 
-                    method: "GET",
+                    body:
+                        JSON.stringify(
+                            {
+                                experiment_id:
+                                    experimentId,
 
-                    cache: "no-store"
+                                condition:
+                                    "matched",
 
+                                image_prompt:
+                                    strategy
+                                    .matched
+                                    .image_prompt
+                            }
+                        )
                 }
-
             );
 
-        const data =
-            await response.json();
 
-        if (!response.ok) {
+        const unmatchedPromise =
+            api(
+                "/api/generate-image",
+                {
+                    method: "POST",
 
-            throw new Error(
-                data.detail ||
-                "状态查询失败"
+                    body:
+                        JSON.stringify(
+                            {
+                                experiment_id:
+                                    experimentId,
+
+                                condition:
+                                    "unmatched",
+
+                                image_prompt:
+                                    strategy
+                                    .unmatched
+                                    .image_prompt
+                            }
+                        )
+                }
             );
 
-        }
 
-        handleStatus(
-            data
+        const [
+            matchedImage,
+            unmatchedImage
+        ] =
+            await Promise.all(
+                [
+                    matchedPromise,
+                    unmatchedPromise
+                ]
+            );
+
+
+        setStatus(
+            "💾 图片生成完成，正在保存实验……",
+            85
         );
 
-        if (
-            data.status ===
-            "completed"
-        ) {
 
-            polling = false;
+        const matched =
+            {
+                ...strategy.matched,
+                image_url:
+                    matchedImage.image_url
+            };
 
-            document
-                .getElementById(
-                    "generate"
-                )
-                .disabled = false;
 
-            renderResult(
-                data
-            );
+        const unmatched =
+            {
+                ...strategy.unmatched,
+                image_url:
+                    unmatchedImage.image_url
+            };
 
-            return;
 
-        }
+        // ------------------------------------------------
+        // 第三步：保存
+        // ------------------------------------------------
 
-        if (
-            data.status ===
-            "failed"
-        ) {
+        await api(
+            "/api/finalize",
+            {
+                method: "POST",
 
-            polling = false;
+                body:
+                    JSON.stringify(
+                        {
+                            experiment_id:
+                                experimentId,
 
-            document
-                .getElementById(
-                    "generate"
-                )
-                .disabled = false;
+                            topic,
 
-            showError(
-                data.error ||
-                "实验生成失败"
-            );
+                            mft:
+                                getMFT(),
 
-            return;
+                            matched_foundation:
+                                strategy
+                                .matched_foundation,
 
-        }
+                            unmatched_foundation:
+                                strategy
+                                .unmatched_foundation,
 
-        setTimeout(
-            pollStatus,
-            2500
+                            matched,
+
+                            unmatched
+                        }
+                    )
+            }
         );
+
+
+        setStatus(
+            "🎉 实验生成完成！",
+            100
+        );
+
+
+        renderResults(
+            strategy,
+            matched,
+            unmatched
+        );
+
 
     }
-
     catch (error) {
 
-        polling = false;
-
-        document
-            .getElementById(
-                "generate"
-            )
-            .disabled = false;
-
-        showError(
-            "浏览器无法取得后端响应。\n\n" +
-            error.message
+        console.error(
+            error
         );
-
-    }
-
-}
-
-
-/* =========================================================
-   状态文字
-========================================================= */
-
-function handleStatus(data) {
-
-    const stage =
-        data.stage || "";
-
-    let main =
-        "AI正在处理……";
-
-    let detail =
-        "";
-
-    if (
-        stage ===
-        "pending_llm"
-        ||
-        stage ===
-        "llm_processing"
-    ) {
-
-        main =
-            "🤖 AI正在生成公益广告策略";
-
-        detail =
-            "正在分析MFT道德画像并生成文案与视觉Prompt";
-
-    }
-
-    else if (
-        stage ===
-        "pending_matched_image"
-        ||
-        stage ===
-        "matched_image_processing"
-    ) {
-
-        main =
-            "🎨 正在生成匹配条件公益海报";
-
-        detail =
-            "正在根据匹配MFT道德诉求生成视觉海报";
-
-    }
-
-    else if (
-        stage ===
-        "pending_unmatched_image"
-        ||
-        stage ===
-        "unmatched_image_processing"
-    ) {
-
-        main =
-            "🎨 正在生成不匹配条件公益海报";
-
-        detail =
-            "正在根据不匹配MFT道德诉求生成第二张海报";
-
-    }
-
-    else if (
-        stage ===
-        "completed"
-    ) {
-
-        main =
-            "🎉 实验生成完成";
-
-        detail =
-            "两张公益海报已经保存";
-
-    }
-
-    setProgress(
-        data.progress || 0,
-        main,
-        detail
-    );
-
-}
-
-
-function setProgress(
-    progress,
-    main,
-    detail
-) {
-
-    document
-        .getElementById(
-            "progressBar"
-        )
-        .style.width =
-        `${progress}%`;
-
-    document
-        .getElementById(
-            "statusMain"
-        )
-        .textContent =
-        main;
-
-    document
-        .getElementById(
-            "statusDetail"
-        )
-        .textContent =
-        detail;
-
-}
-
-
-/* =========================================================
-   显示结果
-========================================================= */
-
-function renderResult(data) {
-
-    document
-        .getElementById(
-            "loaderPanel"
-        )
-        .style.display = "none";
-
-    document
-        .getElementById(
-            "result"
-        )
-        .style.display = "block";
-
-    const matched =
-        data.matched;
-
-    const unmatched =
-        data.unmatched;
-
-    if (!matched || !unmatched) {
-
-        showError(
-            "后端返回成功，但缺少两张广告数据。"
-        );
-
-        return;
-
-    }
-
-    document
-        .getElementById(
-            "resultSummary"
-        )
-        .innerHTML = `
-
-            <b>主题：</b>
-            ${escapeHtml(data.topic)}
-
-            <br>
-
-            <b>匹配：</b>
-            ${foundationNames[data.matched_foundation]}
-
-            <br>
-
-            <b>不匹配：</b>
-            ${foundationNames[data.unmatched_foundation]}
-
-            <br>
-
-            <b>实验ID：</b>
-            ${data.experiment_id}
-
-        `;
-
-    renderAd(
-        "matched",
-        matched
-    );
-
-    renderAd(
-        "unmatched",
-        unmatched
-    );
-
-    fillEvaluationSelects();
-
-}
-
-
-/* =========================================================
-   广告
-========================================================= */
-
-function renderAd(
-    type,
-    ad
-) {
-
-    const prefix =
-        type === "matched"
-            ? "matched"
-            : "unmatched";
-
-    document
-        .getElementById(
-            prefix + "Img"
-        )
-        .src =
-        ad.image_url;
-
-    document
-        .getElementById(
-            prefix + "Copy"
-        )
-        .textContent =
-        ad.copy || "";
-
-    document
-        .getElementById(
-            prefix + "Badge"
-        )
-        .textContent =
-        type === "matched"
-            ? `匹配条件 · ${foundationNames[ad.foundation]}`
-            : `不匹配条件 · ${foundationNames[ad.foundation]}`;
-
-    const strategy =
-        ad.strategy || {};
-
-    document
-        .getElementById(
-            prefix + "Strategy"
-        )
-        .innerHTML = `
-
-            <b>核心价值：</b>
-            ${escapeHtml(strategy.core_value || "")}
-
-            <br><br>
-
-            <b>情绪：</b>
-            ${escapeHtml(
-                Array.isArray(strategy.emotion)
-                    ? strategy.emotion.join("、")
-                    : ""
-            )}
-
-            <br><br>
-
-            <b>叙事：</b>
-            ${escapeHtml(strategy.narrative || "")}
-
-            <br><br>
-
-            <b>视觉隐喻：</b>
-            ${escapeHtml(strategy.visual_metaphor || "")}
-
-            <br><br>
-
-            <b>视觉主体：</b>
-            ${escapeHtml(strategy.visual_subject || "")}
-
-            <br><br>
-
-            <b>构图：</b>
-            ${escapeHtml(strategy.composition || "")}
-
-            <br><br>
-
-            <b>光线：</b>
-            ${escapeHtml(strategy.lighting || "")}
-
-            <br><br>
-
-            <b>字体：</b>
-            ${escapeHtml(strategy.typography_style || "")}
-
-        `;
-
-    document
-        .getElementById(
-            prefix + "Prompt"
-        )
-        .textContent =
-        ad.image_prompt || "";
-
-}
-
-
-/* =========================================================
-   评价
-========================================================= */
-
-function fillEvaluationSelects() {
-
-    const ids = [
-
-        "m_moral",
-        "m_emotion",
-        "m_persuasion",
-        "m_behavior",
-
-        "u_moral",
-        "u_emotion",
-        "u_persuasion",
-        "u_behavior"
-
-    ];
-
-    ids.forEach(id => {
-
-        const select =
-            document
-                .getElementById(id);
-
-        select.innerHTML = "";
-
-        for (
-            let i = 1;
-            i <= 7;
-            i++
-        ) {
-
-            const option =
-                document.createElement(
-                    "option"
-                );
-
-            option.value = i;
-
-            option.textContent =
-                `${i} 分`;
-
-            select.appendChild(
-                option
-            );
-
-        }
-
-    });
-
-}
-
-
-async function submitEval(
-    condition
-) {
-
-    if (!currentExperimentId) {
 
         alert(
-            "当前没有实验。"
+            "生成失败：\n\n" +
+            error.message
         );
 
-        return;
+        setStatus(
+            "❌ 生成失败：" +
+            error.message,
+            0
+        );
 
     }
+    finally {
+
+        button.disabled =
+            false;
+
+    }
+
+}
+
+
+function strategyText(
+    strategy
+) {
+
+    if (!strategy) {
+        return "";
+    }
+
+    const emotion =
+        Array.isArray(
+            strategy.emotion
+        )
+            ? strategy.emotion.join(
+                "、"
+            )
+            : "";
+
+    return (
+
+        `核心价值：${strategy.core_value || ""}\n` +
+
+        `情绪：${emotion}\n` +
+
+        `叙事：${strategy.narrative || ""}\n` +
+
+        `视觉隐喻：${strategy.visual_metaphor || ""}\n` +
+
+        `视觉主体：${strategy.visual_subject || ""}\n` +
+
+        `构图：${strategy.composition || ""}\n` +
+
+        `光线：${strategy.lighting || ""}\n` +
+
+        `字体：${strategy.typography_style || ""}`
+
+    );
+
+}
+
+
+function escapeHtml(
+    text
+) {
+
+    if (text === null ||
+        text === undefined) {
+        return "";
+    }
+
+    return String(text)
+        .replace(
+            /&/g,
+            "&amp;"
+        )
+        .replace(
+            /</g,
+            "&lt;"
+        )
+        .replace(
+            />/g,
+            "&gt;"
+        )
+        .replace(
+            /"/g,
+            "&quot;"
+        )
+        .replace(
+            /'/g,
+            "&#039;"
+        );
+
+}
+
+
+function renderResults(
+    strategy,
+    matched,
+    unmatched
+) {
+
+    const results =
+        document.getElementById(
+            "results"
+        );
+
+    results.innerHTML = "";
+
+
+    results.appendChild(
+        createAdCard(
+            "matched",
+            strategy.matched,
+            matched
+        )
+    );
+
+
+    results.appendChild(
+        createAdCard(
+            "unmatched",
+            strategy.unmatched,
+            unmatched
+        )
+    );
+
+}
+
+
+function createAdCard(
+    condition,
+    strategy,
+    image
+) {
+
+    const card =
+        document.createElement(
+            "div"
+        );
+
+    card.className =
+        "ad-card";
+
 
     const prefix =
         condition === "matched"
             ? "m"
             : "u";
 
-    const adId =
+
+    const badge =
         condition === "matched"
-            ? document
-                .getElementById(
-                    "matchedImg"
-                )
-                .dataset.adId
-            : document
-                .getElementById(
-                    "unmatchedImg"
-                )
-                .dataset.adId;
+            ? "匹配条件"
+            : "不匹配条件";
+
+
+    card.innerHTML = `
+
+        <img
+            src="${escapeHtml(
+                image.image_url
+            )}"
+            alt="${badge}公益海报"
+        >
+
+        <div class="ad-body">
+
+            <div class="badge">
+                ${badge}
+            </div>
+
+            <div class="copy">
+                ${escapeHtml(
+                    strategy.copy
+                )}
+            </div>
+
+            <div class="strategy">
+                ${escapeHtml(
+                    strategyText(
+                        strategy.strategy
+                    )
+                )}
+            </div>
+
+            <details>
+
+                <summary>
+                    查看AI生成的视觉Prompt
+                </summary>
+
+                <div class="prompt">
+                    ${escapeHtml(
+                        strategy.image_prompt
+                    )}
+                </div>
+
+            </details>
+
+            <div class="eval">
+
+                <strong>
+                    广告评价
+                </strong>
+
+                <div class="eval-grid">
+
+                    ${evalSelect(
+                        `${prefix}_moral`,
+                        "道德共鸣"
+                    )}
+
+                    ${evalSelect(
+                        `${prefix}_emotion`,
+                        "情感反应"
+                    )}
+
+                    ${evalSelect(
+                        `${prefix}_persuasion`,
+                        "说服效果"
+                    )}
+
+                    ${evalSelect(
+                        `${prefix}_behavior`,
+                        "行为意愿"
+                    )}
+
+                </div>
+
+                <button
+                    class="primary"
+                    style="margin-top:12px"
+                    onclick="submitEval(
+                        '${condition}',
+                        '${image.ad_id || ""}',
+                        '${currentExperimentId}'
+                    )"
+                >
+                    提交评价
+                </button>
+
+            </div>
+
+        </div>
+
+    `;
+
+
+    return card;
+
+}
+
+
+function evalSelect(
+    id,
+    label
+) {
+
+    let options = "";
+
+    for (
+        let i = 1;
+        i <= 7;
+        i++
+    ) {
+
+        options += `
+            <option value="${i}">
+                ${i}
+            </option>
+        `;
+
+    }
+
+    return `
+
+        <div class="eval-item">
+
+            <label>
+                ${label}
+            </label>
+
+            <select id="${id}">
+                ${options}
+            </select>
+
+        </div>
+
+    `;
+
+}
+
+
+let currentExperimentId =
+    null;
+
+
+async function submitEval(
+    condition,
+    adId,
+    experimentId
+) {
 
     if (!adId) {
 
         alert(
-            "找不到广告ID。"
+            "广告ID不存在，请刷新后重新生成。"
         );
 
         return;
-
     }
 
-    const body = {
 
-        experiment_id:
-            currentExperimentId,
+    const prefix =
+        condition === "matched"
+            ? "m"
+            : "u";
 
-        ad_id:
-            adId,
-
-        moral_resonance:
-            Number(
-                document
-                    .getElementById(
-                        prefix + "_moral"
-                    )
-                    .value
-            ),
-
-        emotional_response:
-            Number(
-                document
-                    .getElementById(
-                        prefix + "_emotion"
-                    )
-                    .value
-            ),
-
-        persuasion:
-            Number(
-                document
-                    .getElementById(
-                        prefix + "_persuasion"
-                    )
-                    .value
-            ),
-
-        behavioral_intention:
-            Number(
-                document
-                    .getElementById(
-                        prefix + "_behavior"
-                    )
-                    .value
-            )
-
-    };
 
     try {
 
-        const response =
-            await fetch(
-                "/api/evaluate",
-                {
+        await api(
+            "/api/evaluate",
+            {
+                method: "POST",
 
-                    method: "POST",
+                body:
+                    JSON.stringify(
+                        {
+                            experiment_id:
+                                experimentId,
 
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
+                            ad_id:
+                                adId,
 
-                    body:
-                        JSON.stringify(body)
+                            moral_resonance:
+                                Number(
+                                    document.getElementById(
+                                        `${prefix}_moral`
+                                    ).value
+                                ),
 
-                }
-            );
+                            emotional_response:
+                                Number(
+                                    document.getElementById(
+                                        `${prefix}_emotion`
+                                    ).value
+                                ),
 
-        const data =
-            await response.json();
+                            persuasion:
+                                Number(
+                                    document.getElementById(
+                                        `${prefix}_persuasion`
+                                    ).value
+                                ),
 
-        if (!response.ok) {
+                            behavioral_intention:
+                                Number(
+                                    document.getElementById(
+                                        `${prefix}_behavior`
+                                    ).value
+                                )
+                        }
+                    )
+            }
+        );
 
-            throw new Error(
-                data.detail ||
-                "评价提交失败"
-            );
-
-        }
 
         alert(
             "评价提交成功！"
         );
 
     }
-
     catch (error) {
 
         alert(
@@ -1928,77 +1405,49 @@ async function submitEval(
 }
 
 
-/* =========================================================
-   历史记录
-========================================================= */
-
 async function showHistory() {
 
-    document
-        .getElementById(
-            "currentView"
-        )
-        .style.display = "none";
+    document.getElementById(
+        "currentView"
+    ).classList.add(
+        "hidden"
+    );
 
-    document
-        .getElementById(
-            "detailView"
-        )
-        .style.display = "none";
+    document.getElementById(
+        "historyView"
+    ).classList.remove(
+        "hidden"
+    );
 
-    document
-        .getElementById(
-            "historyView"
-        )
-        .style.display = "block";
 
     const list =
-        document
-            .getElementById(
-                "historyList"
-            );
+        document.getElementById(
+            "historyList"
+        );
 
     list.innerHTML =
         "正在读取历史记录……";
 
+
     try {
 
-        const response =
-            await fetch(
-                "/api/history",
-                {
-                    cache:
-                        "no-store"
-                }
-            );
-
         const data =
-            await response.json();
-
-        if (!response.ok) {
-
-            throw new Error(
-                data.detail ||
-                "读取失败"
+            await api(
+                "/api/history"
             );
 
-        }
 
-        if (
-            !data.history ||
-            data.history.length === 0
-        ) {
+        if (!data.history.length) {
 
             list.innerHTML =
-                `<div class="muted">
-                    暂时没有历史实验。
-                </div>`;
+                "暂无历史实验。";
 
             return;
-
         }
 
+
         list.innerHTML = "";
+
 
         data.history.forEach(
             item => {
@@ -2011,46 +1460,55 @@ async function showHistory() {
                 div.className =
                     "history-item";
 
-                div.onclick =
-                    () =>
-                        showHistoryDetail(
-                            item.experiment_id
-                        );
 
                 div.innerHTML = `
 
                     <div class="history-topic">
-                        ${escapeHtml(item.topic)}
+                        ${escapeHtml(
+                            item.topic
+                        )}
                     </div>
 
-                    <div class="history-meta">
+                    <div class="history-time">
+                        ${escapeHtml(
+                            item.created_at
+                        )}
+                    </div>
 
-                        实验ID：
-                        ${item.experiment_id}
-
-                        <br>
-
+                    <div>
                         匹配：
-                        ${foundationNames[item.matched_foundation]}
-
+                        ${escapeHtml(
+                            FOUNDATIONS[
+                                item.matched_foundation
+                            ] ||
+                            item.matched_foundation
+                        )}
                         <br>
-
                         不匹配：
-                        ${foundationNames[item.unmatched_foundation]}
+                        ${escapeHtml(
+                            FOUNDATIONS[
+                                item.unmatched_foundation
+                            ] ||
+                            item.unmatched_foundation
+                        )}
+                    </div>
 
-                        <br>
-
-                        状态：
-                        ${item.status}
-
-                        <br>
-
-                        创建时间：
-                        ${item.created_at || ""}
-
+                    <div class="muted">
+                        广告：
+                        ${item.ad_count}
+                       　
+                        评价：
+                        ${item.evaluation_count}
                     </div>
 
                 `;
+
+
+                div.onclick =
+                    () => loadHistory(
+                        item.experiment_id
+                    );
+
 
                 list.appendChild(
                     div
@@ -2060,271 +1518,154 @@ async function showHistory() {
         );
 
     }
-
     catch (error) {
 
         list.innerHTML =
-            `<div class="error-box"
-                  style="display:block">
-                ${escapeHtml(
-                    error.message
-                )}
-            </div>`;
+            `读取失败：${escapeHtml(
+                error.message
+            )}`;
 
     }
+
+}
+
+
+async function loadHistory(
+    experimentId
+) {
+
+    try {
+
+        const data =
+            await api(
+                `/api/history/${experimentId}`
+            );
+
+
+        document.getElementById(
+            "historyView"
+        ).classList.add(
+            "hidden"
+        );
+
+        document.getElementById(
+            "currentView"
+        ).classList.remove(
+            "hidden"
+        );
+
+
+        currentExperimentId =
+            data.experiment_id;
+
+
+        document.getElementById(
+            "emptySection"
+        ).classList.add(
+            "hidden"
+        );
+
+
+        document.getElementById(
+            "loadingSection"
+        ).classList.add(
+            "hidden"
+        );
+
+
+        renderHistoryResults(
+            data
+        );
+
+    }
+    catch (error) {
+
+        alert(
+            "读取历史实验失败：\n" +
+            error.message
+        );
+
+    }
+
+}
+
+
+function renderHistoryResults(
+    data
+) {
+
+    const results =
+        document.getElementById(
+            "results"
+        );
+
+    results.innerHTML = "";
+
+
+    [
+        [
+            "matched",
+            data.matched
+        ],
+        [
+            "unmatched",
+            data.unmatched
+        ]
+    ].forEach(
+        ([condition, item]) => {
+
+            if (!item) {
+                return;
+            }
+
+
+            const strategy =
+                {
+                    copy:
+                        item.copy,
+
+                    strategy:
+                        item.strategy,
+
+                    image_prompt:
+                        item.image_prompt
+                };
+
+
+            results.appendChild(
+                createAdCard(
+                    condition,
+                    strategy,
+                    item
+                )
+            );
+
+        }
+    );
 
 }
 
 
 function backToCurrent() {
 
-    document
-        .getElementById(
-            "historyView"
-        )
-        .style.display = "none";
+    document.getElementById(
+        "historyView"
+    ).classList.add(
+        "hidden"
+    );
 
-    document
-        .getElementById(
-            "detailView"
-        )
-        .style.display = "none";
-
-    document
-        .getElementById(
-            "currentView"
-        )
-        .style.display = "block";
+    document.getElementById(
+        "currentView"
+    ).classList.remove(
+        "hidden"
+    );
 
 }
 
-
-/* =========================================================
-   历史详情
-========================================================= */
-
-async function showHistoryDetail(
-    experimentId
-) {
-
-    document
-        .getElementById(
-            "historyView"
-        )
-        .style.display = "none";
-
-    document
-        .getElementById(
-            "currentView"
-        )
-        .style.display = "none";
-
-    document
-        .getElementById(
-            "detailView"
-        )
-        .style.display = "block";
-
-    const content =
-        document
-            .getElementById(
-                "detailContent"
-            );
-
-    content.innerHTML =
-        "正在读取实验详情……";
-
-    try {
-
-        const response =
-            await fetch(
-                `/api/history/${experimentId}`,
-                {
-                    cache:
-                        "no-store"
-                }
-            );
-
-        const data =
-            await response.json();
-
-        if (!response.ok) {
-
-            throw new Error(
-                data.detail ||
-                "读取失败"
-            );
-
-        }
-
-        currentExperimentId =
-            data.experiment_id;
-
-        content.innerHTML = `
-
-            <h3>
-                ${escapeHtml(data.topic)}
-            </h3>
-
-            <p class="muted">
-
-                匹配：
-                ${foundationNames[data.matched_foundation]}
-
-                <br>
-
-                不匹配：
-                ${foundationNames[data.unmatched_foundation]}
-
-                <br>
-
-                创建时间：
-                ${data.created_at || ""}
-
-            </p>
-
-            <div class="detail-images">
-
-                ${
-                    data.matched
-                    ? `
-                        <div>
-                            <h3>
-                                匹配条件
-                            </h3>
-
-                            <img
-                                src="${data.matched.image_url}"
-                            >
-
-                            <p>
-                                ${escapeHtml(
-                                    data.matched.copy
-                                )}
-                            </p>
-                        </div>
-                    `
-                    : ""
-                }
-
-                ${
-                    data.unmatched
-                    ? `
-                        <div>
-                            <h3>
-                                不匹配条件
-                            </h3>
-
-                            <img
-                                src="${data.unmatched.image_url}"
-                            >
-
-                            <p>
-                                ${escapeHtml(
-                                    data.unmatched.copy
-                                )}
-                            </p>
-                        </div>
-                    `
-                    : ""
-                }
-
-            </div>
-
-        `;
-
-    }
-
-    catch (error) {
-
-        content.innerHTML =
-            `<div class="error-box"
-                  style="display:block">
-                ${escapeHtml(
-                    error.message
-                )}
-            </div>`;
-
-    }
-
-}
-
-
-/* =========================================================
-   工具
-========================================================= */
-
-function showError(message) {
-
-    document
-        .getElementById(
-            "loaderPanel"
-        )
-        .style.display = "none";
-
-    const box =
-        document
-            .getElementById(
-                "errorBox"
-            );
-
-    box.textContent =
-        "生成失败：\n\n" +
-        message;
-
-    box.style.display =
-        "block";
-
-}
-
-
-function escapeHtml(value) {
-
-    if (value === null ||
-        value === undefined) {
-
-        return "";
-
-    }
-
-    return String(value)
-
-        .replace(
-            /&/g,
-            "&amp;"
-        )
-
-        .replace(
-            /</g,
-            "&lt;"
-        )
-
-        .replace(
-            />/g,
-            "&gt;"
-        )
-
-        .replace(
-            /"/g,
-            "&quot;"
-        )
-
-        .replace(
-            /'/g,
-            "&#039;"
-        );
-
-}
-
-
-/* =========================================================
-   初始化
-========================================================= */
 
 createSliders();
 
 </script>
 
 </body>
-
 </html>
