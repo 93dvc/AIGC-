@@ -4,113 +4,85 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
-from urllib.request import Request, urlopen
 from concurrent.futures import ThreadPoolExecutor
 
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+
 from dotenv import load_dotenv
-
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
-
+from fastapi.responses import FileResponse, Response
 from openai import OpenAI
 from pydantic import BaseModel, Field
-
 import psycopg
 from psycopg.rows import dict_row
 
-from vercel.blob import BlobClient
-
 
 # ============================================================
-# 基础路径
+# 基础配置
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
-
-# ============================================================
-# FastAPI
-# ============================================================
-
 app = FastAPI(
-    title="AIGC 个性化公益广告实验平台",
-    version="2.0.0"
+    title="AIGC 个性化公益广告实验平台"
 )
 
 
 # ============================================================
-# MFT 五大道德基础
-# ============================================================
-
-FOUNDATIONS = {
-
-    "care": {
-        "label": "Care / Harm",
-        "cn": "关怀 / 伤害"
-    },
-
-    "fairness": {
-        "label": "Fairness / Cheating",
-        "cn": "公平 / 欺骗"
-    },
-
-    "loyalty": {
-        "label": "Loyalty / Betrayal",
-        "cn": "忠诚 / 背叛"
-    },
-
-    "authority": {
-        "label": "Authority / Subversion",
-        "cn": "权威 / 颠覆"
-    },
-
-    "sanctity": {
-        "label": "Sanctity / Degradation",
-        "cn": "神圣 / 堕落"
-    }
-
-}
-
-
-# ============================================================
-# PostgreSQL
+# 环境变量
 # ============================================================
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+LLM_API_KEY = os.getenv("LLM_API_KEY")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL")
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-5.5")
+
+IMAGE_API_KEY = os.getenv("IMAGE_API_KEY")
+IMAGE_BASE_URL = os.getenv("IMAGE_BASE_URL")
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2")
+
+BLOB_READ_WRITE_TOKEN = os.getenv(
+    "BLOB_READ_WRITE_TOKEN"
+)
+
+BLOB_STORE_ID = os.getenv(
+    "BLOB_STORE_ID"
+)
+
+
+# ============================================================
+# 数据库
+# ============================================================
 
 def db():
-    """
-    PostgreSQL 数据库连接。
-    """
-
-    database_url = os.getenv("DATABASE_URL")
-
-    if not database_url:
-
+    if not DATABASE_URL:
         raise RuntimeError(
             "未配置 DATABASE_URL。"
-            "请在 Vercel Environment Variables 中配置。"
         )
 
     return psycopg.connect(
-        database_url,
-        row_factory=dict_row
+        DATABASE_URL,
+        row_factory=dict_row,
+        connect_timeout=15
     )
 
 
-# ============================================================
-# 初始化数据库
-# ============================================================
-
 def init_db():
+    """
+    自动创建 / 迁移数据库。
+
+    特别处理旧版 ads 表：
+    如果以前没有 created_at，
+    会自动 ALTER TABLE ADD COLUMN。
+    """
 
     conn = db()
 
     try:
-
         # ----------------------------------------------------
         # experiments
         # ----------------------------------------------------
@@ -118,40 +90,67 @@ def init_db():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS experiments (
-
                 id TEXT PRIMARY KEY,
-
                 topic TEXT NOT NULL,
-
-                care DOUBLE PRECISION NOT NULL,
-
-                fairness DOUBLE PRECISION NOT NULL,
-
-                loyalty DOUBLE PRECISION NOT NULL,
-
-                authority DOUBLE PRECISION NOT NULL,
-
-                sanctity DOUBLE PRECISION NOT NULL,
-
+                care DOUBLE PRECISION NOT NULL DEFAULT 0,
+                fairness DOUBLE PRECISION NOT NULL DEFAULT 0,
+                loyalty DOUBLE PRECISION NOT NULL DEFAULT 0,
+                authority DOUBLE PRECISION NOT NULL DEFAULT 0,
+                sanctity DOUBLE PRECISION NOT NULL DEFAULT 0,
                 matched_foundation TEXT NOT NULL,
-
                 unmatched_foundation TEXT NOT NULL,
-
-                status TEXT NOT NULL DEFAULT 'pending',
-
-                current_stage TEXT NOT NULL DEFAULT 'pending_llm',
-
-                progress INTEGER NOT NULL DEFAULT 0,
-
-                error_message TEXT,
-
-                created_at TIMESTAMPTZ NOT NULL,
-
-                updated_at TIMESTAMPTZ NOT NULL
-
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+
+        # ----------------------------------------------------
+        # experiments 旧字段迁移
+        # ----------------------------------------------------
+
+        experiment_columns = [
+            (
+                "care",
+                "DOUBLE PRECISION NOT NULL DEFAULT 0"
+            ),
+            (
+                "fairness",
+                "DOUBLE PRECISION NOT NULL DEFAULT 0"
+            ),
+            (
+                "loyalty",
+                "DOUBLE PRECISION NOT NULL DEFAULT 0"
+            ),
+            (
+                "authority",
+                "DOUBLE PRECISION NOT NULL DEFAULT 0"
+            ),
+            (
+                "sanctity",
+                "DOUBLE PRECISION NOT NULL DEFAULT 0"
+            ),
+            (
+                "matched_foundation",
+                "TEXT NOT NULL DEFAULT 'care'"
+            ),
+            (
+                "unmatched_foundation",
+                "TEXT NOT NULL DEFAULT 'authority'"
+            ),
+            (
+                "created_at",
+                "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            ),
+        ]
+
+        for column, definition in experiment_columns:
+            conn.execute(
+                f"""
+                ALTER TABLE experiments
+                ADD COLUMN IF NOT EXISTS {column}
+                {definition}
+                """
+            )
 
         # ----------------------------------------------------
         # ads
@@ -160,32 +159,57 @@ def init_db():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS ads (
-
                 id TEXT PRIMARY KEY,
-
                 experiment_id TEXT NOT NULL,
-
                 condition TEXT NOT NULL,
-
                 foundation TEXT NOT NULL,
-
-                strategy_json TEXT NOT NULL,
-
-                copy TEXT NOT NULL,
-
-                image_prompt TEXT NOT NULL,
-
+                strategy_json TEXT NOT NULL DEFAULT '{}',
+                copy TEXT NOT NULL DEFAULT '',
+                image_prompt TEXT NOT NULL DEFAULT '',
                 image_url TEXT,
-
-                created_at TIMESTAMPTZ NOT NULL,
-
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(experiment_id)
                     REFERENCES experiments(id)
                     ON DELETE CASCADE
-
             )
             """
         )
+
+        # ----------------------------------------------------
+        # ads 旧字段迁移
+        # ----------------------------------------------------
+
+        ad_columns = [
+            (
+                "strategy_json",
+                "TEXT NOT NULL DEFAULT '{}'"
+            ),
+            (
+                "copy",
+                "TEXT NOT NULL DEFAULT ''"
+            ),
+            (
+                "image_prompt",
+                "TEXT NOT NULL DEFAULT ''"
+            ),
+            (
+                "image_url",
+                "TEXT"
+            ),
+            (
+                "created_at",
+                "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            ),
+        ]
+
+        for column, definition in ad_columns:
+            conn.execute(
+                f"""
+                ALTER TABLE ads
+                ADD COLUMN IF NOT EXISTS {column}
+                {definition}
+                """
+            )
 
         # ----------------------------------------------------
         # evaluations
@@ -194,185 +218,126 @@ def init_db():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS evaluations (
-
                 id BIGSERIAL PRIMARY KEY,
-
                 experiment_id TEXT NOT NULL,
-
                 ad_id TEXT NOT NULL,
-
                 moral_resonance INTEGER NOT NULL,
-
                 emotional_response INTEGER NOT NULL,
-
                 persuasion INTEGER NOT NULL,
-
                 behavioral_intention INTEGER NOT NULL,
-
-                created_at TIMESTAMPTZ NOT NULL,
-
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(experiment_id)
                     REFERENCES experiments(id)
                     ON DELETE CASCADE,
-
                 FOREIGN KEY(ad_id)
                     REFERENCES ads(id)
                     ON DELETE CASCADE
-
             )
             """
         )
 
-        # ----------------------------------------------------
-        # 兼容旧数据库
-        # ----------------------------------------------------
-
-        existing_columns = conn.execute(
+        conn.execute(
             """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'experiments'
+            ALTER TABLE evaluations
+            ADD COLUMN IF NOT EXISTS created_at
+            TIMESTAMPTZ NOT NULL
+            DEFAULT CURRENT_TIMESTAMP
             """
-        ).fetchall()
-
-        column_names = {
-            row["column_name"]
-            for row in existing_columns
-        }
-
-        if "status" not in column_names:
-
-            conn.execute(
-                """
-                ALTER TABLE experiments
-                ADD COLUMN status TEXT NOT NULL
-                DEFAULT 'pending'
-                """
-            )
-
-        if "current_stage" not in column_names:
-
-            conn.execute(
-                """
-                ALTER TABLE experiments
-                ADD COLUMN current_stage TEXT NOT NULL
-                DEFAULT 'pending_llm'
-                """
-            )
-
-        if "progress" not in column_names:
-
-            conn.execute(
-                """
-                ALTER TABLE experiments
-                ADD COLUMN progress INTEGER NOT NULL
-                DEFAULT 0
-                """
-            )
-
-        if "error_message" not in column_names:
-
-            conn.execute(
-                """
-                ALTER TABLE experiments
-                ADD COLUMN error_message TEXT
-                """
-            )
-
-        if "updated_at" not in column_names:
-
-            conn.execute(
-                """
-                ALTER TABLE experiments
-                ADD COLUMN updated_at TIMESTAMPTZ
-                """
-            )
-
-            conn.execute(
-                """
-                UPDATE experiments
-                SET updated_at = created_at
-                WHERE updated_at IS NULL
-                """
-            )
+        )
 
         conn.commit()
 
-        print("✅ PostgreSQL 数据库初始化成功")
+        print("✅ PostgreSQL 数据库初始化/迁移成功")
 
     except Exception:
-
         conn.rollback()
-
         raise
 
     finally:
-
         conn.close()
 
 
-# ============================================================
-# Vercel Serverless：
-# 初始化失败不能让整个 import 崩掉
-# ============================================================
+def ensure_db():
+    """
+    Serverless 每次需要数据库时确保结构存在。
+    """
 
-try:
-
-    init_db()
-
-except Exception as exc:
-
-    print(
-        f"⚠️ 数据库初始化失败：{exc}"
-    )
+    try:
+        init_db()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"数据库初始化失败：{exc}"
+        ) from exc
 
 
 # ============================================================
-# Pydantic
+# MFT
 # ============================================================
+
+FOUNDATIONS = {
+    "care": {
+        "label": "Care / Harm",
+        "cn": "关怀 / 伤害"
+    },
+    "fairness": {
+        "label": "Fairness / Cheating",
+        "cn": "公平 / 欺骗"
+    },
+    "loyalty": {
+        "label": "Loyalty / Betrayal",
+        "cn": "忠诚 / 背叛"
+    },
+    "authority": {
+        "label": "Authority / Subversion",
+        "cn": "权威 / 颠覆"
+    },
+    "sanctity": {
+        "label": "Sanctity / Degradation",
+        "cn": "神圣 / 堕落"
+    }
+}
+
 
 class MFTScores(BaseModel):
-
-    care: float = Field(
-        ge=0,
-        le=10
-    )
-
-    fairness: float = Field(
-        ge=0,
-        le=10
-    )
-
-    loyalty: float = Field(
-        ge=0,
-        le=10
-    )
-
-    authority: float = Field(
-        ge=0,
-        le=10
-    )
-
-    sanctity: float = Field(
-        ge=0,
-        le=10
-    )
+    care: float = Field(ge=0, le=10)
+    fairness: float = Field(ge=0, le=10)
+    loyalty: float = Field(ge=0, le=10)
+    authority: float = Field(ge=0, le=10)
+    sanctity: float = Field(ge=0, le=10)
 
 
 class GenerateRequest(BaseModel):
-
     topic: str = Field(
         min_length=2,
         max_length=200
     )
-
     mft: MFTScores
 
 
-class EvaluationRequest(BaseModel):
-
+class GenerateImageRequest(BaseModel):
     experiment_id: str
+    condition: str
+    image_prompt: str = Field(
+        min_length=10,
+        max_length=30000
+    )
 
+
+class FinalizeRequest(BaseModel):
+    experiment_id: str
+    topic: str
+    mft: MFTScores
+
+    matched_foundation: str
+    unmatched_foundation: str
+
+    matched: dict
+    unmatched: dict
+
+
+class EvaluationRequest(BaseModel):
+    experiment_id: str
     ad_id: str
 
     moral_resonance: int = Field(
@@ -397,35 +362,20 @@ class EvaluationRequest(BaseModel):
 
 
 # ============================================================
-# 工具函数
+# 工具
 # ============================================================
 
-def now_utc():
-
-    return datetime.now(
-        timezone.utc
-    )
-
-
 def scores_dict(mft: MFTScores):
-
     return {
-
         "care": mft.care,
-
         "fairness": mft.fairness,
-
         "loyalty": mft.loyalty,
-
         "authority": mft.authority,
-
         "sanctity": mft.sanctity
-
     }
 
 
 def choose_conditions(mft: MFTScores):
-
     scores = scores_dict(mft)
 
     ordered = sorted(
@@ -441,46 +391,6 @@ def choose_conditions(mft: MFTScores):
 
 
 # ============================================================
-# API Client
-# ============================================================
-
-def get_client(
-    api_key_name: str,
-    base_url_name: str
-):
-
-    key = os.getenv(
-        api_key_name
-    )
-
-    base_url = os.getenv(
-        base_url_name
-    )
-
-    if not key:
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"未配置 {api_key_name}。"
-                "请在 Vercel Environment Variables 中配置。"
-            )
-        )
-
-    kwargs = {
-        "api_key": key
-    }
-
-    if base_url:
-
-        kwargs["base_url"] = base_url
-
-    return OpenAI(
-        **kwargs
-    )
-
-
-# ============================================================
 # LLM Prompt
 # ============================================================
 
@@ -491,18 +401,13 @@ def build_generation_prompt(
     unmatched: str
 ):
 
-    scores = scores_dict(
-        mft
-    )
+    scores = scores_dict(mft)
 
     foundation_desc = "\n".join(
-
         f"- {k}: "
         f"{FOUNDATIONS[k]['label']} / "
         f"{FOUNDATIONS[k]['cn']} = {v}"
-
         for k, v in scores.items()
-
     )
 
     return f"""
@@ -532,22 +437,17 @@ def build_generation_prompt(
 {FOUNDATIONS[unmatched]['label']}
 {FOUNDATIONS[unmatched]['cn']}
 
-这不是普通的两张公益图片。
+这是一个严格的实验刺激生成任务。
 
-必须设计成：
+必须保持：
 
-“同一个公益主题 + 两种明显不同的MFT道德诉求框架”。
+相同公益主题。
 
-两个版本必须让普通受试者一眼看出：
+但是匹配版和不匹配版必须使用明显不同的道德诉求。
 
-它们讨论的是同一个公益问题，
-但是价值诉求、视觉隐喻、传播逻辑和视觉叙事明显不同。
+禁止仅仅改变颜色、几个关键词或者同一主体。
 
-禁止：
-
-“同一个主体 + 同一个场景 + 同一个构图 + 只改变几个关键词”。
-
-必须尽可能改变：
+两个版本必须明显改变：
 
 1. 核心主体
 2. 场景
@@ -555,12 +455,6 @@ def build_generation_prompt(
 4. 构图
 5. 情绪
 6. 视觉符号
-7. 摄影角度
-8. 文字排版
-
-但是：
-
-两张海报必须拥有完全相同的公益主题。
 
 匹配版必须围绕：
 
@@ -577,161 +471,79 @@ def build_generation_prompt(
 MFT参考：
 
 Care / Harm：
-
-强调生命、保护、伤害、脆弱、陪伴、救助。
+生命、保护、伤害、脆弱、陪伴、救助。
 
 Fairness / Cheating：
-
-强调公平、不公平、交换、失衡、规则、机会差距。
+公平、不公平、交换、失衡、规则、机会差距。
 
 Loyalty / Betrayal：
-
-强调共同体、承诺、责任、关系、背叛、共同守护。
+共同体、承诺、责任、背叛、家庭、伙伴。
 
 Authority / Subversion：
-
-强调规则、秩序、责任、公共规范、社会制度。
+规则、秩序、责任、公共规范、社会制度。
 
 Sanctity / Degradation：
-
-强调纯净、污染、神圣、洁净与肮脏之间的冲突。
+纯净、污染、神圣、洁净与肮脏的冲突。
 
 必须生成两句中文公益广告标语。
 
 要求：
 
-1. 完全相同的公益主题。
-2. 明显的对仗关系。
+1. 两句围绕完全相同的公益主题。
+2. 两句具有明显对仗关系。
 3. 句式长度尽量接近。
-4. 结构尽量对应。
-5. 不能使用学术术语。
-6. 必须自然。
-7. 必须有传播性和记忆点。
-8. 必须体现不同MFT道德价值。
+4. 不能出现学术术语。
+5. 必须像真实公益广告。
+6. 必须体现不同MFT道德价值。
+7. 具有传播性和记忆点。
 
-例如：
+图片中必须直接出现对应中文标语。
 
-匹配：
-
-“少一份伤害，多一条生命的路。”
-
-不匹配：
-
-“守一份规则，多一片海洋的净土。”
-
-这是海报生成任务。
-
-图片中必须直接出现对应的中文公益广告标语。
-
-禁止把标语留给网页后期叠加。
-
-image_prompt必须明确写出：
-
-EXACT CHINESE SLOGAN TO RENDER:
-
-“这里放copy中的完整中文标语”
-
-图像模型必须尝试将这句话逐字、完整、清晰地生成在海报中。
-
-不得修改文字。
-
-不得增加额外文字。
-
-不得删除文字。
-
-不得生成英文翻译。
-
-不得生成随机英文。
-
-不得生成Logo。
-
-不得生成水印。
-
-必须生成：
-
-2:3 vertical public service advertising poster.
-
-尺寸：
-
-1024x1536。
-
-必须是完整的公益广告海报。
-
-必须具有：
-
-- 明确视觉主体
-- 明确视觉焦点
-- 前景、中景、背景层次
-- 专业摄影或广告艺术设计
-- 强烈视觉隐喻
-- 合理文字区域
-- 高质量商业广告完成度
-
-标语位置不限。
-
-但必须：
-
-清晰、完整、可读。
-
-允许：
-
-对应的中文公益广告标语。
-
-禁止：
-
-Logo
-水印
-品牌名称
-网址
-其他无关文字
-随机英文
-随机字母
-额外标语
-
-匹配版和不匹配版必须视觉概念明显不同。
-
-不要只是改变颜色。
-
-不要只是改变文字。
-
-不要只是改变一个主体。
-
-每个image_prompt必须是完整英文Prompt。
-
-必须包含：
-
-1. 2:3 vertical public service advertising poster
-2. subject
-3. environment
-4. composition
-5. camera / photography
-6. lighting
-7. emotional atmosphere
-8. visual metaphor
-9. typography design
-10. exact Chinese slogan
-11. slogan placement
-12. slogan integration with artwork
-13. MFT-related artistic treatment
-14. high-end advertising quality
-
-image_prompt中必须明确写出完整中文标语。
-
-例如：
+image_prompt必须明确包含：
 
 Exact Chinese slogan to render:
-“少一份伤害，多一条生命的路。”
+“完整中文标语”
 
 Render this exact Chinese sentence clearly and legibly.
 
 Do not alter, translate, abbreviate, or add words.
 
-最后：
+禁止：
 
-No logo.
-No watermark.
-No extra text.
-No unrelated typography.
+Logo
+Watermark
+品牌名称
+网址
+额外文字
+随机英文
+随机字母
+乱码
+
+图片要求：
+
+2:3 vertical public service advertising poster.
+
+1024x1536.
+
+必须具有：
+
+明确视觉主体
+明确视觉焦点
+前景、中景、背景层次
+专业广告摄影或艺术设计
+强烈视觉隐喻
+合理文字区域
+高质量商业广告完成度
+
+标语位置不限。
+
+必须清晰完整可读。
+
+匹配版和不匹配版的摄影质量、分辨率、完成度必须保持同等级。
+
+不要Markdown。
+
+不要代码块。
 
 只输出合法JSON。
 
@@ -753,7 +565,6 @@ No unrelated typography.
 "copy": "...",
 "image_prompt": "..."
 }},
-
 "unmatched": {{
 "foundation": "{unmatched}",
 "strategy": {{
@@ -771,107 +582,123 @@ No unrelated typography.
 }}
 }}
 
-不要Markdown。
-不要代码块。
-"""
+image_prompt必须是完整英文Prompt。
+
+必须包含：
+
+1. 2:3 vertical public service advertising poster
+2. subject
+3. environment
+4. composition
+5. camera / photography
+6. lighting
+7. emotional atmosphere
+8. visual metaphor
+9. typography design
+10. exact Chinese slogan
+11. slogan placement
+12. slogan integration with artwork
+13. MFT-related artistic treatment
+14. high-end advertising quality
+
+最后：
+
+No logo.
+No watermark.
+No extra text.
+No unrelated typography.
+""".strip()
 
 
 # ============================================================
 # LLM
 # ============================================================
 
+def get_llm_client():
+
+    if not LLM_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="未配置 LLM_API_KEY。"
+        )
+
+    kwargs = {
+        "api_key": LLM_API_KEY
+    }
+
+    if LLM_BASE_URL:
+        kwargs["base_url"] = LLM_BASE_URL
+
+    return OpenAI(**kwargs)
+
+
 def call_llm(prompt: str):
 
     print("🤖 开始调用 LLM...")
 
-    client = get_client(
-        "LLM_API_KEY",
-        "LLM_BASE_URL"
-    )
-
-    model = os.getenv(
-        "LLM_MODEL",
-        "gpt-5.5"
-    )
+    client = get_llm_client()
 
     try:
 
         response = client.chat.completions.create(
-
-            model=model,
-
+            model=LLM_MODEL,
             messages=[
-
                 {
                     "role": "system",
                     "content": (
                         "你是严谨的公益广告实验创意策略AI。"
                         "必须严格遵守MFT实验控制变量。"
-                        "必须让匹配和不匹配的视觉概念具有明显区别。"
                         "必须输出合法JSON。"
                     )
                 },
-
                 {
                     "role": "user",
                     "content": prompt
                 }
-
             ],
-
             response_format={
                 "type": "json_object"
             },
-
             max_tokens=8000
         )
 
     except Exception as exc:
 
-        raise RuntimeError(
-            f"LLM调用失败：{exc}"
+        raise HTTPException(
+            status_code=502,
+            detail=f"LLM调用失败：{exc}"
         ) from exc
-
-    if not response.choices:
-
-        raise RuntimeError(
-            "LLM没有返回choices。"
-        )
 
     content = (
         response
         .choices[0]
         .message
         .content
+        .strip()
     )
-
-    if not content:
-
-        raise RuntimeError(
-            "LLM返回内容为空。"
-        )
-
-    content = content.strip()
 
     try:
 
-        result = json.loads(
-            content
-        )
+        data = json.loads(content)
 
     except json.JSONDecodeError as exc:
 
-        raise RuntimeError(
-            "LLM返回内容不是有效JSON。"
-            f"实际返回长度：{len(content)}。"
-            f"返回开头：{content[:500]}"
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "LLM返回内容不是有效JSON。"
+                f"长度：{len(content)}"
+                f"；开头：{content[:300]}"
+            )
         ) from exc
 
-    return result
+    print("✅ LLM策略生成完成")
+
+    return data
 
 
 # ============================================================
-# Blob 上传
+# Blob
 # ============================================================
 
 def upload_image_to_blob(
@@ -880,8 +707,12 @@ def upload_image_to_blob(
     condition: str
 ):
 
-    if not image_bytes:
+    if not BLOB_READ_WRITE_TOKEN:
+        raise RuntimeError(
+            "未配置 BLOB_READ_WRITE_TOKEN。"
+        )
 
+    if not image_bytes:
         raise RuntimeError(
             "图片数据为空。"
         )
@@ -898,116 +729,129 @@ def upload_image_to_blob(
     )
 
     print(
-        f"☁️ 开始上传 Vercel Blob：{filename}"
+        f"☁️ 开始上传 Vercel Blob："
+        f"{filename}"
+    )
+
+    blob_url = (
+        "https://blob.vercel-storage.com/"
+        + filename
+    )
+
+    request = Request(
+        blob_url,
+        data=image_bytes,
+        method="PUT",
+        headers={
+            "Authorization":
+                f"Bearer {BLOB_READ_WRITE_TOKEN}",
+
+            "x-content-type":
+                "image/png",
+
+            "Content-Type":
+                "image/png",
+
+            "x-vercel-blob-access":
+                "public",
+
+            "x-vercel-blob-add-random-suffix":
+                "true"
+        }
     )
 
     try:
 
-        token = os.getenv(
-            "BLOB_READ_WRITE_TOKEN"
+        with urlopen(
+            request,
+            timeout=60
+        ) as response:
+
+            status = response.status
+
+            body = response.read()
+
+        print(
+            f"☁️ Blob HTTP状态码：{status}"
         )
 
-        if not token:
-
-            token = os.getenv(
-                "VERCEL_BLOB_READ_WRITE_TOKEN"
-            )
-
-        if not token:
+        if status not in (200, 201):
 
             raise RuntimeError(
-                "没有找到 BLOB_READ_WRITE_TOKEN。"
+                f"Blob返回HTTP {status}: "
+                f"{body[:500]!r}"
             )
 
-        client = BlobClient(
-            token=token
-        )
+        # Blob PUT API通常返回JSON
+        try:
 
-        blob = client.put(
-
-            filename,
-
-            image_bytes,
-
-            access="public",
-
-            content_type="image/png",
-
-            add_random_suffix=True
-
-        )
-
-        if not blob:
-
-            raise RuntimeError(
-                "Blob API没有返回对象。"
+            payload = json.loads(
+                body.decode("utf-8")
             )
 
-        blob_url = getattr(
-            blob,
-            "url",
-            None
-        )
+            returned_url = (
+                payload.get("url")
+                or payload.get("downloadUrl")
+            )
 
-        if not blob_url:
+        except Exception:
+
+            returned_url = None
+
+        if not returned_url:
 
             raise RuntimeError(
-                "Blob上传成功但没有返回URL。"
+                "Blob上传成功但没有返回图片URL。"
             )
 
         print(
             f"✅ Vercel Blob 上传成功："
-            f"{blob_url}"
+            f"{returned_url}"
         )
 
-        return blob_url
+        return returned_url
 
-    except Exception as exc:
+    except HTTPError as exc:
 
-        print(
-            f"❌ Blob上传失败：{exc}"
+        detail = exc.read().decode(
+            "utf-8",
+            errors="replace"
         )
 
         raise RuntimeError(
-            f"Vercel Blob 上传失败：{exc}"
+            f"Blob HTTP错误 {exc.code}: "
+            f"{detail[:1000]}"
+        ) from exc
+
+    except URLError as exc:
+
+        raise RuntimeError(
+            f"Blob网络错误：{exc}"
         ) from exc
 
 
 # ============================================================
-# 下载图片URL
+# 图片URL下载
 # ============================================================
 
-def download_image_url(
-    url: str
-):
+def download_image_url(url: str):
+
+    request = Request(
+        url,
+        headers={
+            "User-Agent":
+                "Mozilla/5.0"
+        }
+    )
 
     try:
 
-        request = Request(
-
-            url,
-
-            headers={
-                "User-Agent":
-                    "Mozilla/5.0"
-            }
-
-        )
-
         with urlopen(
             request,
-            timeout=90
+            timeout=60
         ) as response:
 
             data = response.read()
-
-        if not data:
-
-            raise RuntimeError(
-                "下载到的图片为空。"
-            )
-
-        return data
 
     except Exception as exc:
 
@@ -1015,55 +859,62 @@ def download_image_url(
             f"图片URL下载失败：{exc}"
         ) from exc
 
+    if not data:
+
+        raise RuntimeError(
+            "图片下载为空。"
+        )
+
+    return data
+
 
 # ============================================================
-# 图片生成
+# 图片API
 # ============================================================
 
-def generate_image(
-    prompt: str,
-    experiment_id: str,
-    condition: str
-):
+def get_image_client():
 
-    print(
-        f"🎨 正在生成 {condition} 图片..."
-    )
+    if not IMAGE_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="未配置 IMAGE_API_KEY。"
+        )
 
-    client = get_client(
-        "IMAGE_API_KEY",
-        "IMAGE_BASE_URL"
-    )
+    kwargs = {
+        "api_key": IMAGE_API_KEY
+    }
 
-    model = os.getenv(
-        "IMAGE_MODEL",
-        "gpt-image-2"
-    )
+    if IMAGE_BASE_URL:
+        kwargs["base_url"] = IMAGE_BASE_URL
+
+    return OpenAI(**kwargs)
+
+
+def generate_image_bytes(prompt: str):
+
+    client = get_image_client()
 
     try:
 
         result = client.images.generate(
-
-            model=model,
-
+            model=IMAGE_MODEL,
             prompt=prompt,
-
             size="1024x1536",
-
             n=1
-
         )
 
     except Exception as exc:
 
-        raise RuntimeError(
-            f"{condition} 图片API调用失败：{exc}"
+        raise HTTPException(
+            status_code=502,
+            detail=f"图片API调用失败：{exc}"
         ) from exc
 
     if not result.data:
 
-        raise RuntimeError(
-            f"{condition} 图片API没有返回数据。"
+        raise HTTPException(
+            status_code=502,
+            detail="图片API没有返回图片。"
         )
 
     item = result.data[0]
@@ -1080,12 +931,6 @@ def generate_image(
         None
     )
 
-    image_bytes = None
-
-    # --------------------------------------------------------
-    # b64
-    # --------------------------------------------------------
-
     if b64:
 
         try:
@@ -1094,1293 +939,85 @@ def generate_image(
                 b64
             )
 
-            print(
-                f"✅ {condition} 图片获得 b64_json"
-            )
+            print("✅ 图片获得 b64_json")
+
+            return image_bytes
 
         except Exception as exc:
 
-            print(
-                f"⚠️ b64_json解析失败：{exc}"
-            )
+            raise HTTPException(
+                status_code=502,
+                detail=f"b64_json解析失败：{exc}"
+            ) from exc
 
-    # --------------------------------------------------------
-    # URL
-    # --------------------------------------------------------
+    if url:
 
-    if image_bytes is None and url:
+        print("🌐 图片API返回URL，开始下载")
 
-        print(
-            f"🌐 {condition} 图片获得URL"
+        return download_image_url(url)
+
+    raise HTTPException(
+        status_code=502,
+        detail=(
+            "无法识别图片API返回格式，"
+            "既没有b64_json也没有url。"
         )
-
-        image_bytes = download_image_url(
-            url
-        )
-
-    if image_bytes is None:
-
-        raise RuntimeError(
-            f"{condition} 图片API没有返回"
-            "b64_json或url。"
-        )
-
-    # --------------------------------------------------------
-    # Blob
-    # --------------------------------------------------------
-
-    blob_url = upload_image_to_blob(
-
-        image_bytes,
-
-        experiment_id,
-
-        condition
-
     )
-
-    return {
-        "url": blob_url,
-        "source": "vercel_blob"
-    }
 
 
 # ============================================================
-# 创建实验
+# 首页
 # ============================================================
 
-@app.post("/api/generate")
-def create_experiment(
-    req: GenerateRequest
-):
+@app.get("/")
+def index():
 
-    experiment_id = (
-        uuid.uuid4()
-        .hex[:12]
+    index_path = (
+        BASE_DIR /
+        "frontend" /
+        "index.html"
     )
 
-    matched, unmatched = choose_conditions(
-        req.mft
-    )
-
-    current = now_utc()
-
-    print(
-        "\n" +
-        "=" * 60
-    )
-
-    print(
-        "🚀 创建AIGC公益广告实验"
-    )
-
-    print(
-        "=" * 60
-    )
-
-    print(
-        f"📌 实验ID：{experiment_id}"
-    )
-
-    print(
-        f"📌 主题：{req.topic}"
-    )
-
-    print(
-        f"📌 匹配条件：{matched}"
-    )
-
-    print(
-        f"📌 不匹配条件：{unmatched}"
-    )
-
-    conn = None
-
-    try:
-
-        conn = db()
-
-        conn.execute(
-
-            """
-            INSERT INTO experiments
-            (
-                id,
-                topic,
-                care,
-                fairness,
-                loyalty,
-                authority,
-                sanctity,
-                matched_foundation,
-                unmatched_foundation,
-                status,
-                current_stage,
-                progress,
-                error_message,
-                created_at,
-                updated_at
-            )
-            VALUES
-            (
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s
-            )
-            """,
-
-            (
-
-                experiment_id,
-
-                req.topic,
-
-                req.mft.care,
-
-                req.mft.fairness,
-
-                req.mft.loyalty,
-
-                req.mft.authority,
-
-                req.mft.sanctity,
-
-                matched,
-
-                unmatched,
-
-                "processing",
-
-                "pending_llm",
-
-                5,
-
-                None,
-
-                current,
-
-                current
-
-            )
-
-        )
-
-        conn.commit()
-
-    except Exception as exc:
-
-        if conn:
-            conn.rollback()
+    if not index_path.exists():
 
         raise HTTPException(
-
             status_code=500,
-
-            detail=(
-                f"创建实验失败：{exc}"
-            )
-
+            detail="找不到 frontend/index.html"
         )
 
-    finally:
-
-        if conn:
-            conn.close()
-
-    return {
-
-        "ok": True,
-
-        "experiment_id":
-            experiment_id,
-
-        "status":
-            "processing",
-
-        "stage":
-            "pending_llm",
-
-        "progress":
-            5
-
-    }
-
-
-# ============================================================
-# 状态辅助
-# ============================================================
-
-def get_experiment(
-    experiment_id: str
-):
-
-    conn = db()
-
-    try:
-
-        row = conn.execute(
-
-            """
-            SELECT *
-            FROM experiments
-            WHERE id = %s
-            """,
-
-            (
-                experiment_id,
-            )
-
-        ).fetchone()
-
-        return row
-
-    finally:
-
-        conn.close()
-
-
-def update_stage(
-    experiment_id: str,
-    stage: str,
-    progress: int,
-    status: str = "processing",
-    error_message=None
-):
-
-    conn = db()
-
-    try:
-
-        conn.execute(
-
-            """
-            UPDATE experiments
-            SET
-                current_stage = %s,
-                progress = %s,
-                status = %s,
-                error_message = %s,
-                updated_at = %s
-            WHERE id = %s
-            """,
-
-            (
-
-                stage,
-
-                progress,
-
-                status,
-
-                error_message,
-
-                now_utc(),
-
-                experiment_id
-
-            )
-
-        )
-
-        conn.commit()
-
-    finally:
-
-        conn.close()
-
-
-# ============================================================
-# 保存广告
-# ============================================================
-
-def save_ad(
-    experiment_id: str,
-    condition: str,
-    foundation: str,
-    item: dict,
-    image_url: str
-):
-
-    ad_id = (
-        uuid.uuid4()
-        .hex[:12]
+    return FileResponse(
+        index_path
     )
 
-    strategy = item.get(
-        "strategy",
-        {}
+
+# ============================================================
+# favicon
+# ============================================================
+
+@app.get("/favicon.ico")
+def favicon():
+
+    return Response(
+        status_code=204
     )
 
-    copy_text = item.get(
-        "copy",
-        ""
+
+@app.get("/favicon.png")
+def favicon_png():
+
+    return Response(
+        status_code=204
     )
 
-    image_prompt = item.get(
-        "image_prompt",
-        ""
-    )
-
-    conn = db()
-
-    try:
-
-        conn.execute(
-
-            """
-            INSERT INTO ads
-            (
-                id,
-                experiment_id,
-                condition,
-                foundation,
-                strategy_json,
-                copy,
-                image_prompt,
-                image_url,
-                created_at
-            )
-            VALUES
-            (
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s
-            )
-            """,
-
-            (
-
-                ad_id,
-
-                experiment_id,
-
-                condition,
-
-                foundation,
-
-                json.dumps(
-                    strategy,
-                    ensure_ascii=False
-                ),
-
-                copy_text,
-
-                image_prompt,
-
-                image_url,
-
-                now_utc()
-
-            )
-
-        )
-
-        conn.commit()
-
-    finally:
-
-        conn.close()
-
-    return ad_id
-
 
 # ============================================================
-# 获取实验结果
-# ============================================================
-
-def build_experiment_result(
-    experiment_id: str
-):
-
-    conn = db()
-
-    try:
-
-        experiment = conn.execute(
-
-            """
-            SELECT *
-            FROM experiments
-            WHERE id = %s
-            """,
-
-            (
-                experiment_id,
-            )
-
-        ).fetchone()
-
-        if not experiment:
-
-            return None
-
-        ads = conn.execute(
-
-            """
-            SELECT *
-            FROM ads
-            WHERE experiment_id = %s
-            ORDER BY
-                CASE
-                    WHEN condition = 'matched'
-                    THEN 1
-                    ELSE 2
-                END
-            """,
-
-            (
-                experiment_id,
-            )
-
-        ).fetchall()
-
-        result = {
-
-            "experiment_id":
-                experiment["id"],
-
-            "topic":
-                experiment["topic"],
-
-            "mft": {
-
-                "care":
-                    experiment["care"],
-
-                "fairness":
-                    experiment["fairness"],
-
-                "loyalty":
-                    experiment["loyalty"],
-
-                "authority":
-                    experiment["authority"],
-
-                "sanctity":
-                    experiment["sanctity"]
-
-            },
-
-            "matched_foundation":
-                experiment[
-                    "matched_foundation"
-                ],
-
-            "unmatched_foundation":
-                experiment[
-                    "unmatched_foundation"
-                ],
-
-            "status":
-                experiment["status"],
-
-            "stage":
-                experiment["current_stage"],
-
-            "progress":
-                experiment["progress"],
-
-            "error":
-                experiment["error_message"],
-
-            "matched":
-                None,
-
-            "unmatched":
-                None
-
-        }
-
-        for ad in ads:
-
-            try:
-
-                strategy = json.loads(
-                    ad["strategy_json"]
-                )
-
-            except Exception:
-
-                strategy = {}
-
-            item = {
-
-                "ad_id":
-                    ad["id"],
-
-                "foundation":
-                    ad["foundation"],
-
-                "strategy":
-                    strategy,
-
-                "copy":
-                    ad["copy"],
-
-                "image_prompt":
-                    ad["image_prompt"],
-
-                "image_url":
-                    ad["image_url"]
-
-            }
-
-            if ad["condition"] == "matched":
-
-                result["matched"] = item
-
-            else:
-
-                result["unmatched"] = item
-
-        return result
-
-    finally:
-
-        conn.close()
-
-
-# ============================================================
-# 核心：轮询式状态机
-# ============================================================
-
-@app.get(
-    "/api/generate/status/{experiment_id}"
-)
-def generate_status(
-    experiment_id: str
-):
-
-    experiment = get_experiment(
-        experiment_id
-    )
-
-    if not experiment:
-
-        raise HTTPException(
-            status_code=404,
-            detail="找不到实验。"
-        )
-
-    status = experiment[
-        "status"
-    ]
-
-    stage = experiment[
-        "current_stage"
-    ]
-
-    # ========================================================
-    # 已完成
-    # ========================================================
-
-    if status == "completed":
-
-        return build_experiment_result(
-            experiment_id
-        )
-
-    # ========================================================
-    # 已失败
-    # ========================================================
-
-    if status == "failed":
-
-        return {
-
-            "experiment_id":
-                experiment_id,
-
-            "status":
-                "failed",
-
-            "stage":
-                stage,
-
-            "progress":
-                experiment["progress"],
-
-            "error":
-                experiment["error_message"]
-
-        }
-
-    # ========================================================
-    # 第一步：LLM
-    # ========================================================
-
-    if stage == "pending_llm":
-
-        update_stage(
-
-            experiment_id,
-
-            "llm_processing",
-
-            10
-
-        )
-
-        try:
-
-            mft = MFTScores(
-
-                care=experiment["care"],
-
-                fairness=experiment["fairness"],
-
-                loyalty=experiment["loyalty"],
-
-                authority=experiment["authority"],
-
-                sanctity=experiment["sanctity"]
-
-            )
-
-            matched = experiment[
-                "matched_foundation"
-            ]
-
-            unmatched = experiment[
-                "unmatched_foundation"
-            ]
-
-            prompt = build_generation_prompt(
-
-                experiment["topic"],
-
-                mft,
-
-                matched,
-
-                unmatched
-
-            )
-
-            ai = call_llm(
-                prompt
-            )
-
-            matched_item = ai.get(
-                "matched"
-            )
-
-            unmatched_item = ai.get(
-                "unmatched"
-            )
-
-            if not matched_item:
-
-                raise RuntimeError(
-                    "LLM没有返回matched。"
-                )
-
-            if not unmatched_item:
-
-                raise RuntimeError(
-                    "LLM没有返回unmatched。"
-                )
-
-            if not matched_item.get(
-                "image_prompt"
-            ):
-
-                raise RuntimeError(
-                    "matched缺少image_prompt。"
-                )
-
-            if not unmatched_item.get(
-                "image_prompt"
-            ):
-
-                raise RuntimeError(
-                    "unmatched缺少image_prompt。"
-                )
-
-            # 暂时把策略存入临时字段不方便，
-            # 所以直接创建广告记录。
-            conn = db()
-
-            try:
-
-                # 防止重复创建
-                existing = conn.execute(
-
-                    """
-                    SELECT COUNT(*) AS count
-                    FROM ads
-                    WHERE experiment_id = %s
-                    """,
-
-                    (
-                        experiment_id,
-                    )
-
-                ).fetchone()
-
-                if existing["count"] == 0:
-
-                    for condition, foundation in [
-
-                        (
-                            "matched",
-                            matched
-                        ),
-
-                        (
-                            "unmatched",
-                            unmatched
-                        )
-
-                    ]:
-
-                        item = ai[
-                            condition
-                        ]
-
-                        ad_id = (
-                            uuid.uuid4()
-                            .hex[:12]
-                        )
-
-                        conn.execute(
-
-                            """
-                            INSERT INTO ads
-                            (
-                                id,
-                                experiment_id,
-                                condition,
-                                foundation,
-                                strategy_json,
-                                copy,
-                                image_prompt,
-                                image_url,
-                                created_at
-                            )
-                            VALUES
-                            (
-                                %s,
-                                %s,
-                                %s,
-                                %s,
-                                %s,
-                                %s,
-                                %s,
-                                %s,
-                                %s
-                            )
-                            """,
-
-                            (
-
-                                ad_id,
-
-                                experiment_id,
-
-                                condition,
-
-                                foundation,
-
-                                json.dumps(
-                                    item.get(
-                                        "strategy",
-                                        {}
-                                    ),
-                                    ensure_ascii=False
-                                ),
-
-                                item.get(
-                                    "copy",
-                                    ""
-                                ),
-
-                                item.get(
-                                    "image_prompt",
-                                    ""
-                                ),
-
-                                None,
-
-                                now_utc()
-
-                            )
-
-                        )
-
-                conn.commit()
-
-            finally:
-
-                conn.close()
-
-            update_stage(
-
-                experiment_id,
-
-                "pending_matched_image",
-
-                30
-
-            )
-
-            return {
-
-                "experiment_id":
-                    experiment_id,
-
-                "status":
-                    "processing",
-
-                "stage":
-                    "pending_matched_image",
-
-                "progress":
-                    30,
-
-                "message":
-                    "LLM策略生成完成，准备生成匹配海报。"
-
-            }
-
-        except Exception as exc:
-
-            print(
-                f"❌ LLM阶段失败：{exc}"
-            )
-
-            update_stage(
-
-                experiment_id,
-
-                "llm_failed",
-
-                10,
-
-                "failed",
-
-                str(exc)
-
-            )
-
-            return {
-
-                "experiment_id":
-                    experiment_id,
-
-                "status":
-                    "failed",
-
-                "stage":
-                    "llm_failed",
-
-                "progress":
-                    10,
-
-                "error":
-                    str(exc)
-
-            }
-
-    # ========================================================
-    # 第二步：matched
-    # ========================================================
-
-    if stage == "pending_matched_image":
-
-        update_stage(
-
-            experiment_id,
-
-            "matched_image_processing",
-
-            40
-
-        )
-
-        try:
-
-            conn = db()
-
-            try:
-
-                ad = conn.execute(
-
-                    """
-                    SELECT *
-                    FROM ads
-                    WHERE experiment_id = %s
-                    AND condition = 'matched'
-                    LIMIT 1
-                    """,
-
-                    (
-                        experiment_id,
-                    )
-
-                ).fetchone()
-
-            finally:
-
-                conn.close()
-
-            if not ad:
-
-                raise RuntimeError(
-                    "找不到matched广告记录。"
-                )
-
-            if ad["image_url"]:
-
-                update_stage(
-
-                    experiment_id,
-
-                    "pending_unmatched_image",
-
-                    60
-
-                )
-
-                return {
-
-                    "experiment_id":
-                        experiment_id,
-
-                    "status":
-                        "processing",
-
-                    "stage":
-                        "pending_unmatched_image",
-
-                    "progress":
-                        60,
-
-                    "message":
-                        "matched图片已经存在。"
-
-                }
-
-            image_result = generate_image(
-
-                ad["image_prompt"],
-
-                experiment_id,
-
-                "matched"
-
-            )
-
-            conn = db()
-
-            try:
-
-                conn.execute(
-
-                    """
-                    UPDATE ads
-                    SET image_url = %s
-                    WHERE id = %s
-                    """,
-
-                    (
-
-                        image_result["url"],
-
-                        ad["id"]
-
-                    )
-
-                )
-
-                conn.commit()
-
-            finally:
-
-                conn.close()
-
-            update_stage(
-
-                experiment_id,
-
-                "pending_unmatched_image",
-
-                60
-
-            )
-
-            return {
-
-                "experiment_id":
-                    experiment_id,
-
-                "status":
-                    "processing",
-
-                "stage":
-                    "pending_unmatched_image",
-
-                "progress":
-                    60,
-
-                "message":
-                    "matched海报生成完成。"
-
-            }
-
-        except Exception as exc:
-
-            print(
-                f"❌ matched图片阶段失败：{exc}"
-            )
-
-            update_stage(
-
-                experiment_id,
-
-                "matched_image_failed",
-
-                40,
-
-                "failed",
-
-                str(exc)
-
-            )
-
-            return {
-
-                "experiment_id":
-                    experiment_id,
-
-                "status":
-                    "failed",
-
-                "stage":
-                    "matched_image_failed",
-
-                "progress":
-                    40,
-
-                "error":
-                    str(exc)
-
-            }
-
-    # ========================================================
-    # 第三步：unmatched
-    # ========================================================
-
-    if stage == "pending_unmatched_image":
-
-        update_stage(
-
-            experiment_id,
-
-            "unmatched_image_processing",
-
-            70
-
-        )
-
-        try:
-
-            conn = db()
-
-            try:
-
-                ad = conn.execute(
-
-                    """
-                    SELECT *
-                    FROM ads
-                    WHERE experiment_id = %s
-                    AND condition = 'unmatched'
-                    LIMIT 1
-                    """,
-
-                    (
-                        experiment_id,
-                    )
-
-                ).fetchone()
-
-            finally:
-
-                conn.close()
-
-            if not ad:
-
-                raise RuntimeError(
-                    "找不到unmatched广告记录。"
-                )
-
-            if ad["image_url"]:
-
-                update_stage(
-
-                    experiment_id,
-
-                    "completed",
-
-                    100,
-
-                    "completed"
-
-                )
-
-                return build_experiment_result(
-                    experiment_id
-                )
-
-            image_result = generate_image(
-
-                ad["image_prompt"],
-
-                experiment_id,
-
-                "unmatched"
-
-            )
-
-            conn = db()
-
-            try:
-
-                conn.execute(
-
-                    """
-                    UPDATE ads
-                    SET image_url = %s
-                    WHERE id = %s
-                    """,
-
-                    (
-
-                        image_result["url"],
-
-                        ad["id"]
-
-                    )
-
-                )
-
-                conn.commit()
-
-            finally:
-
-                conn.close()
-
-            update_stage(
-
-                experiment_id,
-
-                "completed",
-
-                100,
-
-                "completed"
-
-            )
-
-            print(
-                f"🎉 实验完成：{experiment_id}"
-            )
-
-            return build_experiment_result(
-                experiment_id
-            )
-
-        except Exception as exc:
-
-            print(
-                f"❌ unmatched图片阶段失败：{exc}"
-            )
-
-            update_stage(
-
-                experiment_id,
-
-                "unmatched_image_failed",
-
-                70,
-
-                "failed",
-
-                str(exc)
-
-            )
-
-            return {
-
-                "experiment_id":
-                    experiment_id,
-
-                "status":
-                    "failed",
-
-                "stage":
-                    "unmatched_image_failed",
-
-                "progress":
-                    70,
-
-                "error":
-                    str(exc)
-
-            }
-
-    # ========================================================
-    # 正在处理
-    # ========================================================
-
-    return {
-
-        "experiment_id":
-            experiment_id,
-
-        "status":
-            status,
-
-        "stage":
-            stage,
-
-        "progress":
-            experiment["progress"],
-
-        "message":
-            "任务正在处理中，请稍候。"
-
-    }
-
-
-# ============================================================
-# 健康检查
+# Health
 # ============================================================
 
 @app.get("/api/health")
 def health():
 
     database_ok = False
-
     database_error = None
 
     try:
@@ -2399,69 +1036,406 @@ def health():
 
         database_error = str(exc)
 
-    blob_token = (
-        os.getenv(
-            "BLOB_READ_WRITE_TOKEN"
-        )
-        or
-        os.getenv(
-            "VERCEL_BLOB_READ_WRITE_TOKEN"
-        )
-    )
-
     return {
-
-        "status":
-            "ok",
-
-        "database":
-            database_ok,
-
-        "database_error":
-            database_error,
-
-        "llm_configured":
-            bool(
-                os.getenv(
-                    "LLM_API_KEY"
-                )
-            ),
-
-        "image_configured":
-            bool(
-                os.getenv(
-                    "IMAGE_API_KEY"
-                )
-            ),
-
-        "blob_configured":
-            bool(blob_token),
-
-        "llm_base_url":
-            bool(
-                os.getenv(
-                    "LLM_BASE_URL"
-                )
-            ),
-
-        "image_base_url":
-            bool(
-                os.getenv(
-                    "IMAGE_BASE_URL"
-                )
-            )
-
+        "status": "ok",
+        "database": database_ok,
+        "database_error": database_error,
+        "llm_configured": bool(
+            LLM_API_KEY
+        ),
+        "image_configured": bool(
+            IMAGE_API_KEY
+        ),
+        "blob_configured": bool(
+            BLOB_READ_WRITE_TOKEN
+        ),
+        "blob_store_configured": bool(
+            BLOB_STORE_ID
+        )
     }
 
 
 # ============================================================
-# 评价
+# 第一步：生成实验策略
+#
+# 重要：
+# 这里只调用LLM，不调用图片API。
+#
+# 这样Vercel不会因为一次请求持续太久而 Failed to fetch。
+# ============================================================
+
+@app.post("/api/generate")
+def generate(
+    req: GenerateRequest
+):
+
+    experiment_id = (
+        uuid.uuid4()
+        .hex[:12]
+    )
+
+    matched, unmatched = choose_conditions(
+        req.mft
+    )
+
+    print("=" * 60)
+    print("🚀 开始生成AIGC公益广告实验")
+    print("=" * 60)
+    print(f"📌 实验ID：{experiment_id}")
+    print(f"📌 主题：{req.topic}")
+    print(f"📌 匹配条件：{matched}")
+    print(f"📌 不匹配条件：{unmatched}")
+
+    ai = call_llm(
+        build_generation_prompt(
+            req.topic,
+            req.mft,
+            matched,
+            unmatched
+        )
+    )
+
+    matched_item = ai.get(
+        "matched"
+    )
+
+    unmatched_item = ai.get(
+        "unmatched"
+    )
+
+    if not matched_item:
+        raise HTTPException(
+            status_code=500,
+            detail="LLM缺少 matched 输出。"
+        )
+
+    if not unmatched_item:
+        raise HTTPException(
+            status_code=500,
+            detail="LLM缺少 unmatched 输出。"
+        )
+
+    if not matched_item.get(
+        "image_prompt"
+    ):
+        raise HTTPException(
+            status_code=500,
+            detail="matched 缺少 image_prompt。"
+        )
+
+    if not unmatched_item.get(
+        "image_prompt"
+    ):
+        raise HTTPException(
+            status_code=500,
+            detail="unmatched 缺少 image_prompt。"
+        )
+
+    return {
+        "experiment_id":
+            experiment_id,
+
+        "topic":
+            req.topic,
+
+        "mft":
+            scores_dict(req.mft),
+
+        "matched_foundation":
+            matched,
+
+        "unmatched_foundation":
+            unmatched,
+
+        "matched":
+            matched_item,
+
+        "unmatched":
+            unmatched_item
+    }
+
+
+# ============================================================
+# 第二步：单张图片生成
+#
+# 每次只生成一张。
+# 前端会同时请求两个条件。
+# ============================================================
+
+@app.post("/api/generate-image")
+def generate_image_endpoint(
+    req: GenerateImageRequest
+):
+
+    if req.condition not in (
+        "matched",
+        "unmatched"
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail="condition必须是matched或unmatched。"
+        )
+
+    print(
+        f"🎨 正在生成 "
+        f"{req.condition} 图片..."
+    )
+
+    image_bytes = generate_image_bytes(
+        req.image_prompt
+    )
+
+    print(
+        f"📦 图片大小："
+        f"{len(image_bytes) / 1024 / 1024:.2f} MB"
+    )
+
+    image_url = upload_image_to_blob(
+        image_bytes,
+        req.experiment_id,
+        req.condition
+    )
+
+    print(
+        f"✅ {req.condition} 图片已经上传到 Vercel Blob"
+    )
+
+    return {
+        "ok": True,
+        "experiment_id":
+            req.experiment_id,
+        "condition":
+            req.condition,
+        "image_url":
+            image_url
+    }
+
+
+# ============================================================
+# 第三步：保存实验
+# ============================================================
+
+@app.post("/api/finalize")
+def finalize(
+    req: FinalizeRequest
+):
+
+    ensure_db()
+
+    conn = None
+
+    try:
+
+        conn = db()
+
+        # ----------------------------------------------------
+        # 防止重复提交
+        # ----------------------------------------------------
+
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM experiments
+            WHERE id = %s
+            """,
+            (
+                req.experiment_id,
+            )
+        ).fetchone()
+
+        if existing:
+
+            return {
+                "ok": True,
+                "experiment_id":
+                    req.experiment_id,
+                "already_exists":
+                    True
+            }
+
+        now = datetime.now(
+            timezone.utc
+        )
+
+        # ----------------------------------------------------
+        # experiment
+        # ----------------------------------------------------
+
+        conn.execute(
+            """
+            INSERT INTO experiments
+            (
+                id,
+                topic,
+                care,
+                fairness,
+                loyalty,
+                authority,
+                sanctity,
+                matched_foundation,
+                unmatched_foundation,
+                created_at
+            )
+            VALUES
+            (
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s
+            )
+            """,
+            (
+                req.experiment_id,
+                req.topic,
+                req.mft.care,
+                req.mft.fairness,
+                req.mft.loyalty,
+                req.mft.authority,
+                req.mft.sanctity,
+                req.matched_foundation,
+                req.unmatched_foundation,
+                now
+            )
+        )
+
+        # ----------------------------------------------------
+        # ads
+        # ----------------------------------------------------
+
+        for condition, item in [
+            (
+                "matched",
+                req.matched
+            ),
+            (
+                "unmatched",
+                req.unmatched
+            )
+        ]:
+
+            ad_id = (
+                uuid.uuid4()
+                .hex[:12]
+            )
+
+            strategy = item.get(
+                "strategy",
+                {}
+            )
+
+            copy_text = item.get(
+                "copy",
+                ""
+            )
+
+            image_prompt = item.get(
+                "image_prompt",
+                ""
+            )
+
+            image_url = item.get(
+                "image_url"
+            )
+
+            foundation = item.get(
+                "foundation"
+            )
+
+            conn.execute(
+                """
+                INSERT INTO ads
+                (
+                    id,
+                    experiment_id,
+                    condition,
+                    foundation,
+                    strategy_json,
+                    copy,
+                    image_prompt,
+                    image_url,
+                    created_at
+                )
+                VALUES
+                (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s
+                )
+                """,
+                (
+                    ad_id,
+                    req.experiment_id,
+                    condition,
+                    foundation,
+                    json.dumps(
+                        strategy,
+                        ensure_ascii=False
+                    ),
+                    copy_text,
+                    image_prompt,
+                    image_url,
+                    now
+                )
+            )
+
+            item["ad_id"] = ad_id
+
+        conn.commit()
+
+        print(
+            f"🎉 实验保存成功："
+            f"{req.experiment_id}"
+        )
+
+        return {
+            "ok": True,
+            "experiment_id":
+                req.experiment_id,
+            "matched":
+                req.matched,
+            "unmatched":
+                req.unmatched
+        }
+
+    except Exception as exc:
+
+        if conn:
+            conn.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"实验保存失败：{exc}"
+        ) from exc
+
+    finally:
+
+        if conn:
+            conn.close()
+
+
+# ============================================================
+# 提交评价
 # ============================================================
 
 @app.post("/api/evaluate")
 def evaluate(
     req: EvaluationRequest
 ):
+
+    ensure_db()
 
     conn = None
 
@@ -2470,36 +1444,26 @@ def evaluate(
         conn = db()
 
         exists = conn.execute(
-
             """
             SELECT id
             FROM ads
             WHERE id = %s
             AND experiment_id = %s
             """,
-
             (
-
                 req.ad_id,
-
                 req.experiment_id
-
             )
-
         ).fetchone()
 
         if not exists:
 
             raise HTTPException(
-
                 status_code=404,
-
                 detail="找不到对应广告。"
-
             )
 
         conn.execute(
-
             """
             INSERT INTO evaluations
             (
@@ -2522,25 +1486,17 @@ def evaluate(
                 %s
             )
             """,
-
             (
-
                 req.experiment_id,
-
                 req.ad_id,
-
                 req.moral_resonance,
-
                 req.emotional_response,
-
                 req.persuasion,
-
                 req.behavioral_intention,
-
-                now_utc()
-
+                datetime.now(
+                    timezone.utc
+                )
             )
-
         )
 
         conn.commit()
@@ -2562,14 +1518,9 @@ def evaluate(
             conn.rollback()
 
         raise HTTPException(
-
             status_code=500,
-
-            detail=(
-                f"评价保存失败：{exc}"
-            )
-
-        )
+            detail=f"评价保存失败：{exc}"
+        ) from exc
 
     finally:
 
@@ -2584,6 +1535,8 @@ def evaluate(
 @app.get("/api/history")
 def get_history():
 
+    ensure_db()
+
     conn = None
 
     try:
@@ -2591,80 +1544,37 @@ def get_history():
         conn = db()
 
         rows = conn.execute(
-
             """
             SELECT
-
                 e.id,
-
                 e.topic,
-
                 e.care,
-
                 e.fairness,
-
                 e.loyalty,
-
                 e.authority,
-
                 e.sanctity,
-
                 e.matched_foundation,
-
                 e.unmatched_foundation,
-
-                e.status,
-
-                e.current_stage,
-
-                e.progress,
-
                 e.created_at,
-
-                COUNT(DISTINCT a.id)
-                    AS ad_count,
-
-                COUNT(DISTINCT ev.id)
-                    AS evaluation_count
-
+                COUNT(DISTINCT a.id) AS ad_count,
+                COUNT(DISTINCT ev.id) AS evaluation_count
             FROM experiments e
-
             LEFT JOIN ads a
                 ON e.id = a.experiment_id
-
             LEFT JOIN evaluations ev
                 ON e.id = ev.experiment_id
-
             GROUP BY
-
                 e.id,
-
                 e.topic,
-
                 e.care,
-
                 e.fairness,
-
                 e.loyalty,
-
                 e.authority,
-
                 e.sanctity,
-
                 e.matched_foundation,
-
                 e.unmatched_foundation,
-
-                e.status,
-
-                e.current_stage,
-
-                e.progress,
-
                 e.created_at
-
-            ORDER BY
-                e.created_at DESC
+            ORDER BY e.created_at DESC
             """
         ).fetchall()
 
@@ -2672,86 +1582,64 @@ def get_history():
 
         for row in rows:
 
-            history.append({
+            history.append(
+                {
+                    "experiment_id":
+                        row["id"],
 
-                "experiment_id":
-                    row["id"],
+                    "topic":
+                        row["topic"],
 
-                "topic":
-                    row["topic"],
+                    "mft":
+                        {
+                            "care":
+                                row["care"],
+                            "fairness":
+                                row["fairness"],
+                            "loyalty":
+                                row["loyalty"],
+                            "authority":
+                                row["authority"],
+                            "sanctity":
+                                row["sanctity"]
+                        },
 
-                "mft": {
+                    "matched_foundation":
+                        row[
+                            "matched_foundation"
+                        ],
 
-                    "care":
-                        row["care"],
+                    "unmatched_foundation":
+                        row[
+                            "unmatched_foundation"
+                        ],
 
-                    "fairness":
-                        row["fairness"],
+                    "created_at":
+                        row["created_at"].isoformat()
+                        if row["created_at"]
+                        else None,
 
-                    "loyalty":
-                        row["loyalty"],
+                    "ad_count":
+                        row["ad_count"],
 
-                    "authority":
-                        row["authority"],
-
-                    "sanctity":
-                        row["sanctity"]
-
-                },
-
-                "matched_foundation":
-                    row[
-                        "matched_foundation"
-                    ],
-
-                "unmatched_foundation":
-                    row[
-                        "unmatched_foundation"
-                    ],
-
-                "status":
-                    row["status"],
-
-                "stage":
-                    row["current_stage"],
-
-                "progress":
-                    row["progress"],
-
-                "created_at":
-                    row["created_at"].isoformat()
-                    if row["created_at"]
-                    else None,
-
-                "ad_count":
-                    row["ad_count"],
-
-                "evaluation_count":
-                    row["evaluation_count"]
-
-            })
+                    "evaluation_count":
+                        row["evaluation_count"]
+                }
+            )
 
         return {
-
             "total":
                 len(history),
-
             "history":
                 history
-
         }
 
     except Exception as exc:
 
         raise HTTPException(
-
             status_code=500,
-
-            detail=(
-                f"历史记录读取失败：{exc}"
-            )
-
-        )
+            detail=f"历史记录读取失败：{exc}"
+        ) from exc
 
     finally:
 
@@ -2770,6 +1658,8 @@ def get_history_detail(
     experiment_id: str
 ):
 
+    ensure_db()
+
     conn = None
 
     try:
@@ -2777,36 +1667,28 @@ def get_history_detail(
         conn = db()
 
         experiment = conn.execute(
-
             """
             SELECT *
             FROM experiments
             WHERE id = %s
             """,
-
             (
                 experiment_id,
             )
-
         ).fetchone()
 
         if not experiment:
 
             raise HTTPException(
-
                 status_code=404,
-
                 detail="找不到该历史实验。"
-
             )
 
         ads = conn.execute(
-
             """
             SELECT *
             FROM ads
             WHERE experiment_id = %s
-
             ORDER BY
                 CASE
                     WHEN condition = 'matched'
@@ -2814,54 +1696,43 @@ def get_history_detail(
                     ELSE 2
                 END
             """,
-
             (
                 experiment_id,
             )
-
         ).fetchall()
 
         evaluations = conn.execute(
-
             """
             SELECT *
             FROM evaluations
             WHERE experiment_id = %s
             ORDER BY created_at ASC
             """,
-
             (
                 experiment_id,
             )
-
         ).fetchall()
 
         result = {
-
             "experiment_id":
                 experiment["id"],
 
             "topic":
                 experiment["topic"],
 
-            "mft": {
-
-                "care":
-                    experiment["care"],
-
-                "fairness":
-                    experiment["fairness"],
-
-                "loyalty":
-                    experiment["loyalty"],
-
-                "authority":
-                    experiment["authority"],
-
-                "sanctity":
-                    experiment["sanctity"]
-
-            },
+            "mft":
+                {
+                    "care":
+                        experiment["care"],
+                    "fairness":
+                        experiment["fairness"],
+                    "loyalty":
+                        experiment["loyalty"],
+                    "authority":
+                        experiment["authority"],
+                    "sanctity":
+                        experiment["sanctity"]
+                },
 
             "matched_foundation":
                 experiment[
@@ -2872,15 +1743,6 @@ def get_history_detail(
                 experiment[
                     "unmatched_foundation"
                 ],
-
-            "status":
-                experiment["status"],
-
-            "stage":
-                experiment["current_stage"],
-
-            "progress":
-                experiment["progress"],
 
             "created_at":
                 experiment["created_at"].isoformat()
@@ -2895,7 +1757,6 @@ def get_history_detail(
 
             "evaluations":
                 []
-
         }
 
         for ad in ads:
@@ -2911,7 +1772,6 @@ def get_history_detail(
                 strategy = {}
 
             item = {
-
                 "ad_id":
                     ad["id"],
 
@@ -2929,61 +1789,56 @@ def get_history_detail(
 
                 "image_url":
                     ad["image_url"]
-
             }
 
             if ad["condition"] == "matched":
 
-                result[
-                    "matched"
-                ] = item
+                result["matched"] = item
 
             else:
 
-                result[
-                    "unmatched"
-                ] = item
+                result["unmatched"] = item
 
         for evaluation in evaluations:
 
             result[
                 "evaluations"
-            ].append({
+            ].append(
+                {
+                    "id":
+                        evaluation["id"],
 
-                "id":
-                    evaluation["id"],
+                    "ad_id":
+                        evaluation["ad_id"],
 
-                "ad_id":
-                    evaluation["ad_id"],
+                    "moral_resonance":
+                        evaluation[
+                            "moral_resonance"
+                        ],
 
-                "moral_resonance":
-                    evaluation[
-                        "moral_resonance"
-                    ],
+                    "emotional_response":
+                        evaluation[
+                            "emotional_response"
+                        ],
 
-                "emotional_response":
-                    evaluation[
-                        "emotional_response"
-                    ],
+                    "persuasion":
+                        evaluation[
+                            "persuasion"
+                        ],
 
-                "persuasion":
-                    evaluation[
-                        "persuasion"
-                    ],
+                    "behavioral_intention":
+                        evaluation[
+                            "behavioral_intention"
+                        ],
 
-                "behavioral_intention":
-                    evaluation[
-                        "behavioral_intention"
-                    ],
-
-                "created_at":
-                    evaluation[
-                        "created_at"
-                    ].isoformat()
-                    if evaluation["created_at"]
-                    else None
-
-            })
+                    "created_at":
+                        evaluation[
+                            "created_at"
+                        ].isoformat()
+                        if evaluation["created_at"]
+                        else None
+                }
+            )
 
         return result
 
@@ -2994,14 +1849,9 @@ def get_history_detail(
     except Exception as exc:
 
         raise HTTPException(
-
             status_code=500,
-
-            detail=(
-                f"历史实验详情读取失败：{exc}"
-            )
-
-        )
+            detail=f"历史实验详情读取失败：{exc}"
+        ) from exc
 
     finally:
 
@@ -3010,50 +1860,20 @@ def get_history_detail(
 
 
 # ============================================================
-# 首页
+# 本地运行
 # ============================================================
 
-@app.get("/")
-def index():
+if __name__ == "__main__":
 
-    index_path = (
-        BASE_DIR /
-        "frontend" /
-        "index.html"
-    )
+    import uvicorn
 
-    if not index_path.exists():
-
-        raise HTTPException(
-
-            status_code=500,
-
-            detail=(
-                "找不到 frontend/index.html。"
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=int(
+            os.getenv(
+                "PORT",
+                "8000"
             )
-
         )
-
-    return FileResponse(
-        index_path
     )
-
-
-# ============================================================
-# favicon
-# ============================================================
-
-@app.get("/favicon.ico")
-def favicon():
-
-    return {
-        "ok": True
-    }
-
-
-@app.get("/favicon.png")
-def favicon_png():
-
-    return {
-        "ok": True
-    }
