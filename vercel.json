@@ -1,10 +1,17 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": {
-    "backend/main.py": {
-      "maxDuration": 300
+  "version": 2,
+
+  "builds": [
+    {
+      "src": "backend/main.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "frontend/index.html",
+      "use": "@vercel/static"
     }
-  },
+  ],
+
   "routes": [
     {
       "src": "/api/(.*)",
@@ -20,7 +27,7 @@
     },
     {
       "src": "/",
-      "dest": "/backend/main.py"
+      "dest": "/frontend/index.html"
     }
   ]
 }
