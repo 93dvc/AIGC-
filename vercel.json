@@ -4,5 +4,23 @@
     "backend/main.py": {
       "maxDuration": 300
     }
-  }
+  },
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/backend/main.py"
+    },
+    {
+      "src": "/favicon.ico",
+      "dest": "/backend/main.py"
+    },
+    {
+      "src": "/favicon.png",
+      "dest": "/backend/main.py"
+    },
+    {
+      "src": "/",
+      "dest": "/backend/main.py"
+    }
+  ]
 }
