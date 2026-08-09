@@ -4,4 +4,3 @@ openai
 python-dotenv
 pydantic
 psycopg[binary]
-vercel
