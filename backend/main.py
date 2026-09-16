@@ -632,14 +632,28 @@ def get_llm_client():
     return OpenAI(**kwargs)
 
 
+# ============================================================
+# LLM 调用
+# ============================================================
+
 def call_llm(prompt: str):
+    """
+    调用 LLM。
+
+    针对第三方 API / Cloudflare 的 502：
+    - 不在 Vercel 中傻等 60 秒
+    - 识别 retryable 502
+    - 返回 503
+    - 给前端明确的重试提示
+    """
 
     print("🤖 开始调用 LLM...")
+    print(f"🤖 模型：{LLM_MODEL}")
+    print(f"🤖 Base URL：{LLM_BASE_URL}")
 
     client = get_llm_client()
 
     try:
-
         response = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[
@@ -659,23 +673,166 @@ def call_llm(prompt: str):
             response_format={
                 "type": "json_object"
             },
-            max_tokens=8000
+
+            # 原来是 8000
+            # 当前任务不需要这么大的输出空间
+            max_tokens=4000
         )
 
     except Exception as exc:
 
+        # ----------------------------------------------------
+        # 获取 HTTP 状态码
+        # ----------------------------------------------------
+
+        status_code = getattr(
+            exc,
+            "status_code",
+            None
+        )
+
+        error_text = str(exc)
+
+        print("=" * 60)
+        print("❌ LLM 调用失败")
+        print(f"❌ 类型：{type(exc).__name__}")
+        print(f"❌ 状态码：{status_code}")
+        print(f"❌ 错误：{error_text[:2000]}")
+        print("=" * 60)
+
+        # ----------------------------------------------------
+        # Cloudflare / 第三方 API 502
+        # ----------------------------------------------------
+
+        if status_code == 502 or "502" in error_text:
+
+            # Cloudflare 明确返回 retry_after=60
+            retry_after = 60
+
+            # 如果错误信息里包含 retry_after，尝试提取
+            import re
+
+            match = re.search(
+                r"retry_after['\"]?\s*[:=]\s*(\d+)",
+                error_text,
+                re.IGNORECASE
+            )
+
+            if match:
+                try:
+                    retry_after = int(match.group(1))
+                except Exception:
+                    retry_after = 60
+
+            print(
+                f"⚠️ 上游 LLM 服务暂时不可用。"
+                f"建议 {retry_after} 秒后重试。"
+            )
+
+            # 注意：
+            # 不要在 Vercel 里 time.sleep(60)
+            # 否则很容易造成 Serverless 请求超时。
+            raise HTTPException(
+                status_code=503,
+                headers={
+                    "Retry-After": str(retry_after)
+                },
+                detail=(
+                    "AI服务暂时繁忙，"
+                    f"上游服务器返回 Cloudflare 502。"
+                    f"请等待约 {retry_after} 秒后重新生成。"
+                )
+            ) from exc
+
+        # ----------------------------------------------------
+        # 429：请求过多
+        # ----------------------------------------------------
+
+        if status_code == 429:
+
+            print("⚠️ LLM API 请求过于频繁。")
+
+            raise HTTPException(
+                status_code=429,
+                headers={
+                    "Retry-After": "30"
+                },
+                detail=(
+                    "AI服务请求过于频繁，"
+                    "请稍等 30 秒后再试。"
+                )
+            ) from exc
+
+        # ----------------------------------------------------
+        # 其他 5xx
+        # ----------------------------------------------------
+
+        if status_code is not None and status_code >= 500:
+
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "AI服务暂时不可用。"
+                    f"上游返回 HTTP {status_code}，"
+                    "请稍后重试。"
+                )
+            ) from exc
+
+        # ----------------------------------------------------
+        # API Key / 权限问题
+        # ----------------------------------------------------
+
+        if status_code in (401, 403):
+
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "LLM API 鉴权失败，请检查 "
+                    "LLM_API_KEY 是否正确。"
+                )
+            ) from exc
+
+        # ----------------------------------------------------
+        # 其他未知错误
+        # ----------------------------------------------------
+
         raise HTTPException(
             status_code=502,
-            detail=f"LLM调用失败：{exc}"
+            detail=f"LLM调用失败：{error_text[:1500]}"
         ) from exc
+
+    # ========================================================
+    # 检查返回结果
+    # ========================================================
+
+    if not response.choices:
+        raise HTTPException(
+            status_code=502,
+            detail="LLM没有返回有效结果。"
+        )
 
     content = (
         response
         .choices[0]
         .message
         .content
-        .strip()
     )
+
+    if not content:
+        raise HTTPException(
+            status_code=502,
+            detail="LLM返回内容为空。"
+        )
+
+    content = content.strip()
+
+    print(
+        f"📄 LLM返回长度：{len(content)} 字符"
+    )
+
+    # ========================================================
+    # JSON解析
+    # ========================================================
 
     try:
 
@@ -683,19 +840,23 @@ def call_llm(prompt: str):
 
     except json.JSONDecodeError as exc:
 
+        print("❌ LLM返回的内容不是合法JSON")
+        print(
+            f"❌ 内容开头：{content[:1000]}"
+        )
+
         raise HTTPException(
             status_code=500,
             detail=(
                 "LLM返回内容不是有效JSON。"
-                f"长度：{len(content)}"
-                f"；开头：{content[:300]}"
+                f"长度：{len(content)}；"
+                f"开头：{content[:300]}"
             )
         ) from exc
 
     print("✅ LLM策略生成完成")
 
     return data
-
 
 # ============================================================
 # Blob
