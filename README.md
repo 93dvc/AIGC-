@@ -8,7 +8,6 @@
 - LLM 生成两套传播策略、文案和图片 Prompt
 - Image API 生成两张海报
 - SQLite 保存实验与评价
-- API Key 只在后端 `.env`
 
 ## Windows 启动
 
